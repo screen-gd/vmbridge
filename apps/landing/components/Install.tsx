@@ -15,7 +15,7 @@ export function Install() {
       <div className="grid grid-cols-[minmax(0,1fr)] lg:grid-cols-12">
         <div className={`${cell} lg:col-span-5`}>
           <h2 className="title">{copy.install.title}</h2>
-          <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">{copy.install.body}</p>
+          <p className="mt-3 text-base leading-relaxed text-muted-foreground">{copy.install.body}</p>
         </div>
         <div className={`${cell} flex flex-wrap content-center items-center gap-3 border-t lg:col-span-7 lg:border-t-0 lg:border-l`}>
           <Command text={install} />

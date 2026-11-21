@@ -42,7 +42,7 @@ export function Screens() {
                   {current ? <span className="text-primary">{"> "}</span> : null}
                   <span className={current ? "text-foreground" : "text-muted-foreground"}>{tabs[shot.id].label}</span>
                 </span>
-                <span className="mt-2 block text-[15px] leading-relaxed text-muted-foreground">{tabs[shot.id].caption}</span>
+                {current ? <span className="mt-2 block text-base leading-relaxed text-muted-foreground">{tabs[shot.id].caption}</span> : null}
               </button>
             );
           })}
@@ -81,7 +81,7 @@ export function Screens() {
               ))}
             </div>
           </Panel>
-          <div className={`${cell} border-t text-[15px] leading-relaxed text-muted-foreground lg:hidden`}>{tabs[active].caption}</div>
+          <div className={`${cell} border-t text-base leading-relaxed text-muted-foreground lg:hidden`}>{tabs[active].caption}</div>
         </div>
       </div>
     </Section>

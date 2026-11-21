@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { copy } from "@/lib/copy";
 import { useReducedMotion } from "@/lib/hooks";
+import { cell } from "@/lib/styles";
 import { Section } from "./Section";
 import { stateDot } from "./Topology";
 import { Panel } from "./Window";
@@ -46,8 +47,9 @@ const rise = { animation: "rise 200ms both" };
 
 /**
  * A small T3 Code thread that demonstrates the VM lifecycle: Send wakes a sleeping VM, the agent
- * streams a reply, and after a few idle seconds the VM sleeps again. Beside it, the four state
- * cells follow the phase the thread is in.
+ * streams a reply, and after a few idle seconds the VM sleeps again. Beside it, one column lists
+ * the four states; with the live state's body under the list — the bodies share one grid cell,
+ * so the column never jumps when the phase changes.
  */
 export function Lifecycle() {
   const [phase, setPhase] = useState<Phase>("asleep");
@@ -122,7 +124,7 @@ export function Lifecycle() {
             className="flex w-full flex-col"
             label="t3 code / Hello-World"
             aside={
-              <span className="flex h-6 shrink-0 items-center gap-1.5 rounded-md bg-muted px-2 font-mono text-[11px] whitespace-nowrap text-muted-foreground">
+              <span className="flex h-6 shrink-0 items-center gap-1.5 rounded-md bg-muted px-2 font-mono text-[13px] whitespace-nowrap text-muted-foreground">
                 <span className={chipDot[phase]} />
                 vm-df9bca
                 <span>{chipLabel(phase)}</span>
@@ -136,15 +138,15 @@ export function Lifecycle() {
               <div className="flex min-h-0 flex-1 basis-0 flex-col justify-end gap-5 overflow-hidden p-6 [mask-image:linear-gradient(to_bottom,transparent,black_3.5rem)] sm:p-8">
                 {items.map((item) =>
                   item.kind === "user" ? (
-                    <div key={item.id} className="ml-auto max-w-[80%] rounded-md bg-muted px-3.5 py-2 text-[15px]" style={item.animate ? rise : undefined}>
+                    <div key={item.id} className="ml-auto max-w-[80%] rounded-md bg-muted px-3.5 py-2 text-base" style={item.animate ? rise : undefined}>
                       {item.text}
                     </div>
                   ) : item.kind === "agent" ? (
-                    <div key={item.id} className="max-w-[85%] text-pretty text-[15px] text-muted-foreground" style={item.animate ? rise : undefined}>
+                    <div key={item.id} className="max-w-[85%] text-pretty text-base text-muted-foreground" style={item.animate ? rise : undefined}>
                       {item.text}
                     </div>
                   ) : (
-                    <div key={item.id} className="flex items-center justify-center gap-2 font-mono text-[11px] text-faint" style={item.animate ? rise : undefined}>
+                    <div key={item.id} className="flex items-center justify-center gap-2 font-mono text-[13px] text-faint" style={item.animate ? rise : undefined}>
                       <span className={item.dot} />
                       {item.text}
                     </div>
@@ -152,7 +154,7 @@ export function Lifecycle() {
                 )}
               </div>
               <div className="mx-6 mt-0 mb-6 flex h-12 items-center gap-2 rounded-md bg-muted pr-1.5 pl-3.5 sm:mx-8 sm:mb-8">
-                <span aria-hidden className="flex-1 truncate text-[15px] text-muted-foreground">
+                <span aria-hidden className="flex-1 truncate text-base text-muted-foreground">
                   {message}
                 </span>
                 <button
@@ -169,22 +171,31 @@ export function Lifecycle() {
           </Panel>
         </div>
 
-        <div className="flex flex-col border-t lg:col-span-5 lg:border-t-0 lg:border-l">
-          {copy.lifecycle.states.map((state, i) => (
-            <div
-              key={state.name}
-              aria-current={i === current || undefined}
-              className={`flex flex-1 gap-3 border-b px-6 py-6 transition-opacity duration-200 last:border-b-0 sm:px-8 ${
-                i === current ? "bg-card" : "opacity-60"
-              }`}
-            >
-              <span className={`mt-1.5 shrink-0 ${markers[i]}`} />
-              <div>
-                <div className="text-base font-medium">{state.name}</div>
-                <p className="mt-2 text-pretty text-[15px] leading-relaxed text-muted-foreground">{state.body}</p>
+        <div className={`${cell} flex flex-col justify-center border-t lg:col-span-5 lg:border-t-0 lg:border-l`}>
+          <div className="flex flex-col gap-4">
+            {copy.lifecycle.states.map((state, i) => (
+              <div
+                key={state.name}
+                aria-current={i === current || undefined}
+                className={`flex items-center gap-3 text-lg font-medium ${i === current ? "" : "text-muted-foreground"}`}
+              >
+                <span className={`shrink-0 ${markers[i]}`} />
+                {state.name}
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+          <div className="mt-8 grid border-t pt-6">
+            {copy.lifecycle.states.map((state, i) => (
+              <p
+                key={state.name}
+                aria-hidden={i !== current || undefined}
+                className={`col-start-1 row-start-1 text-pretty text-base leading-relaxed text-muted-foreground ${i === current ? "" : "invisible"}`}
+                style={i === current ? rise : undefined}
+              >
+                {state.body}
+              </p>
+            ))}
+          </div>
         </div>
       </div>
     </Section>

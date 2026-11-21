@@ -68,11 +68,11 @@ export function TerminalBody({ script, rows, className = "" }: { script: string[
   }, [script, inView, reduced]);
 
   const lineCount = (rows ?? script.length) + 1;
-  const line = "min-h-5 sm:min-h-7";
+  const line = "min-h-7";
   return (
     <div
       ref={ref}
-      className={`p-6 font-mono text-[11px] leading-5 break-words whitespace-pre-wrap sm:p-8 sm:text-[13px] sm:leading-7 ${className}`}
+      className={`p-6 font-mono text-[13px] leading-7 break-words whitespace-pre-wrap sm:p-8 ${className}`}
       style={{ minHeight: `${Math.max(11, lineCount * 1.75 + 5)}rem` }}
     >
       {script.slice(0, visible).map((text, i) =>

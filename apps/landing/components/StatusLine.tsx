@@ -18,7 +18,7 @@ export function StatusLine() {
   const text = copy.status[phase].replace("{n}", String(countdown));
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background">
-      <div className={`${frame} flex h-8 items-center px-6 font-mono text-[11px] sm:px-8`}>
+      <div className={`${frame} flex h-8 items-center px-6 font-mono text-[12px] sm:px-8`}>
         <span className="flex items-center gap-2 text-muted-foreground">
           <span className={dots[phase]} />
           {text}

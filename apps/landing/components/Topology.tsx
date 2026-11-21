@@ -114,7 +114,7 @@ function Device({ name }: { name: string }) {
   return (
     <div className="flex items-center gap-2 rounded-md bg-muted px-2.5 py-2">
       <T3Logo className="size-6" />
-      <span className="text-xs font-medium">{name}</span>
+      <span className="text-[13px] font-medium">{name}</span>
     </div>
   );
 }
@@ -130,7 +130,7 @@ export const stateDot: Record<VmState, string> = {
 
 /** One project VM. Clicking sleeps an online VM and wakes an asleep one. */
 function VmNode({ vm, provider, narrow, onToggle }: { vm: Vm; provider: Provider; narrow: boolean; onToggle: () => void }) {
-  const dim = `transition-opacity duration-200 ${vm.state === "asleep" ? "opacity-50" : ""}`;
+  const asleep = vm.state === "asleep";
   return (
     <button
       type="button"
@@ -139,12 +139,12 @@ function VmNode({ vm, provider, narrow, onToggle }: { vm: Vm; provider: Provider
       className={`${narrow ? "w-60" : "w-52"} rounded-md bg-muted p-3 text-left`}
     >
       <div className="flex items-center gap-2.5">
-        <ProviderLogo provider={provider} className={`size-7 rounded-md ring-white/10 ${dim}`} />
-        <div className={`min-w-0 flex-1 leading-tight ${dim}`}>
-          <div className="truncate text-sm font-medium">{vm.project}</div>
-          <div className="truncate font-mono text-[11px] text-faint">{provider.name}</div>
+        <ProviderLogo provider={provider} className={`size-7 rounded-md ring-white/10 transition-opacity duration-200 ${asleep ? "opacity-50" : ""}`} />
+        <div className="min-w-0 flex-1 leading-tight">
+          <div className={`truncate text-sm font-medium ${asleep ? "text-muted-foreground" : ""}`}>{vm.project}</div>
+          <div className="truncate font-mono text-[13px] text-faint">{provider.name}</div>
         </div>
-        <div className="flex items-center gap-1.5 text-[11px] whitespace-nowrap text-muted-foreground">
+        <div className="flex items-center gap-1.5 text-[13px] whitespace-nowrap text-muted-foreground">
           <span className={stateDot[vm.state]} />
           {stateLabel(vm.state)}
         </div>
@@ -170,8 +170,10 @@ const seedRows: LogRow[] = [
 /**
  * The wiring diagram row: devices to VM Bridge to the project VMs, with the event log beside it.
  * `stacked` renders the single-column variant used inside the docs page's bordered box.
+ * `log={false}` drops the events panel so the diagram takes the whole row, with the click hint
+ * as a small mono line under it.
  */
-export function Topology({ stacked = false }: { stacked?: boolean }) {
+export function Topology({ stacked = false, log = true }: { stacked?: boolean; log?: boolean }) {
   const [vms, setVms] = useState(initialVms);
   const [rows, setRows] = useState(seedRows);
   const nextRow = useRef(seedRows.length);
@@ -210,13 +212,14 @@ export function Topology({ stacked = false }: { stacked?: boolean }) {
   };
 
   return (
-    <div ref={panel} id="topology" className={`grid grid-cols-[minmax(0,1fr)] ${stacked ? "" : "lg:grid-cols-[minmax(0,1fr)_26rem]"}`}>
-      <div className={`relative ${narrow ? "" : "h-[26rem]"}`} style={narrow ? { aspectRatio: `${layout.w} / ${layout.h}` } : undefined}>
+    <div ref={panel} id="topology" className={`grid grid-cols-[minmax(0,1fr)] ${stacked || !log ? "" : "lg:grid-cols-[minmax(0,1fr)_26rem]"}`}>
+      <div>
+        <div className={`relative ${narrow ? "" : "h-[26rem]"}`} style={narrow ? { aspectRatio: `${layout.w} / ${layout.h}` } : undefined}>
         {!narrow ? (
           <>
-            <span className="absolute top-3 left-[14%] -translate-x-1/2 font-mono text-[11px] text-faint">{copy.diagram.devices}</span>
-            <span className="absolute top-3 left-[50%] -translate-x-1/2 font-mono text-[11px] text-faint">{copy.diagram.bridge}</span>
-            <span className="absolute top-3 left-[84%] -translate-x-1/2 font-mono text-[11px] text-faint">{copy.diagram.vms}</span>
+            <span className="absolute top-3 left-[14%] -translate-x-1/2 font-mono text-[13px] text-faint">{copy.diagram.devices}</span>
+            <span className="absolute top-3 left-[50%] -translate-x-1/2 font-mono text-[13px] text-faint">{copy.diagram.bridge}</span>
+            <span className="absolute top-3 left-[84%] -translate-x-1/2 font-mono text-[13px] text-faint">{copy.diagram.vms}</span>
           </>
         ) : null}
         <svg viewBox={`0 0 ${layout.w} ${layout.h}`} preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
@@ -241,7 +244,7 @@ export function Topology({ stacked = false }: { stacked?: boolean }) {
         <At point={layout.bridge} layout={layout}>
           <div className="flex flex-col items-center gap-1.5">
             <Logo className="size-12" />
-            <span className="font-mono text-[11px] text-faint">:3774</span>
+            <span className="font-mono text-[13px] text-faint">:3774</span>
           </div>
         </At>
         {vms.map((vm) => (
@@ -249,25 +252,29 @@ export function Topology({ stacked = false }: { stacked?: boolean }) {
             <VmNode vm={vm} provider={providerOf(vm.providerId)} narrow={narrow} onToggle={() => toggle(vm.id)} />
           </At>
         ))}
+        </div>
+        {log ? null : <div className="px-6 pb-6 font-mono text-[13px] text-muted-foreground sm:px-8">{copy.hero.hint}</div>}
       </div>
 
-      <div className={stacked ? "border-t" : "border-t lg:border-t-0 lg:border-l"}>
-        <Panel label="events" aside={copy.hero.hint}>
-          <div aria-live="polite" className="p-6 font-mono text-[13px] leading-7 sm:px-8">
-            {shown.map((row) => (
-              <div
-                key={row.id}
-                className="grid grid-cols-[auto_auto_minmax(0,1fr)] gap-x-4"
-                style={row.animate ? { animation: "rise 200ms both" } : undefined}
-              >
-                <span className="whitespace-nowrap">{row.project}</span>
-                <span className="whitespace-nowrap text-muted-foreground">{row.state}</span>
-                <span className="min-w-0 text-faint">{row.detail}</span>
-              </div>
-            ))}
-          </div>
-        </Panel>
-      </div>
+      {log ? (
+        <div className={stacked ? "border-t" : "border-t lg:border-t-0 lg:border-l"}>
+          <Panel label="events" aside={copy.hero.hint}>
+            <div aria-live="polite" className="p-6 font-mono text-[13px] leading-7 sm:px-8">
+              {shown.map((row) => (
+                <div
+                  key={row.id}
+                  className="grid grid-cols-[auto_auto_minmax(0,1fr)] gap-x-4"
+                  style={row.animate ? { animation: "rise 200ms both" } : undefined}
+                >
+                  <span className="whitespace-nowrap">{row.project}</span>
+                  <span className="whitespace-nowrap text-muted-foreground">{row.state}</span>
+                  <span className="min-w-0 text-faint">{row.detail}</span>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        </div>
+      ) : null}
     </div>
   );
 }

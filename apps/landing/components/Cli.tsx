@@ -40,7 +40,7 @@ export function Cli() {
                     </span>
                   ))}
                 </code>
-                <span className="mt-2 block text-[15px] leading-relaxed text-muted-foreground">{c.does}</span>
+                <span className="mt-2 block text-base leading-relaxed text-muted-foreground">{c.does}</span>
               </button>
             );
           })}
