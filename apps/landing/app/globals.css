@@ -1,22 +1,20 @@
 @import "tailwindcss";
 
-/* Same palette as the dashboard: dark only, on pure black. */
+/* Dark only, near black with white text and one warm orange tint. */
 :root {
-  --background: #000;
-  --foreground: #ededed;
-  --card: #0a0a0a;
-  --muted: #141414;
-  --muted-foreground: #8f8f8f;
-  --faint: #5c5c5c;
-  --border: #1f1f1f;
-  --primary: #8b5cf6;
-  --success: #3ecf8e;
-  --warning: #f5b74e;
+  --background: #070708;
+  --foreground: #ffffff;
+  --card: #0e0e10;
+  --muted: #18181b;
+  --muted-foreground: rgb(255 255 255 / 0.62);
+  --faint: rgb(255 255 255 / 0.38);
+  --border: rgb(255 255 255 / 0.08);
+  --primary: oklch(0.74 0.17 52);
 }
 
 @theme inline {
-  --font-sans: var(--font-mona), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-fragment), ui-monospace, "SF Mono", Menlo, monospace;
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -26,8 +24,6 @@
   --color-faint: var(--faint);
   --color-border: var(--border);
   --color-primary: var(--primary);
-  --color-success: var(--success);
-  --color-warning: var(--warning);
 }
 
 @layer base {
@@ -41,9 +37,23 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family: var(--font-sans);
+    font-size: 1rem;
+    line-height: 1.6;
+  }
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    letter-spacing: 0;
+  }
+  :focus-visible {
+    outline: 1px solid var(--primary);
+    outline-offset: 0;
   }
   ::selection {
-    background: color-mix(in oklab, var(--primary) 45%, transparent);
+    background: color-mix(in oklab, var(--primary) 35%, transparent);
   }
 }
 
@@ -59,52 +69,38 @@
   }
 }
 
-/* A faint dot grid, like the dashboard canvas. */
-.dots {
-  background-image: radial-gradient(circle at 1px 1px, #262626 1px, transparent 0);
-  background-size: 22px 22px;
-}
-
-/* A dot crossing its track. Transform only, so it stays on the compositor. */
-@keyframes travel {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(0);
+@media (prefers-reduced-transparency: reduce) {
+  header {
+    background: var(--background);
+    backdrop-filter: none;
   }
 }
 
-@keyframes fill {
-  from {
-    transform: scaleX(0);
-  }
-  to {
-    transform: scaleX(1);
-  }
+/* Page headline. */
+@utility display {
+  font-size: clamp(2.5rem, 6vw, 4.5rem);
+  line-height: 1.02;
+  letter-spacing: -0.035em;
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+/* Section headings. */
+@utility title {
+  font-size: clamp(1.75rem, 3vw, 2.5rem);
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  font-weight: 600;
+  text-wrap: balance;
 }
 
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
     transform: none;
-  }
-}
-
-/* A sleeping VM shrugging off a poke. Runs once per click. */
-@keyframes poke {
-  0%,
-  100% {
-    transform: rotate(0);
-  }
-  25% {
-    transform: rotate(-8deg);
-  }
-  75% {
-    transform: rotate(8deg);
   }
 }

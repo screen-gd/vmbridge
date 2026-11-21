@@ -1,22 +1,22 @@
 import type { Metadata, Viewport } from "next";
-import { Fragment_Mono, Mona_Sans } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
+import { copy } from "@/lib/copy";
 import "./globals.css";
 
-const mona = Mona_Sans({ subsets: ["latin"], variable: "--font-mona" });
-const fragment = Fragment_Mono({ subsets: ["latin"], weight: "400", variable: "--font-fragment" });
+const geist = Geist({ subsets: ["latin"], variable: "--font-geist" });
+const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono" });
 
 export const metadata: Metadata = {
-  title: { default: "VM Bridge: T3 Code on cloud VMs", template: "%s | VM Bridge" },
-  description:
-    "Pair T3 Code once. VM Bridge gives each project its own cloud VM, puts it to sleep when idle and wakes it when you send a message.",
+  title: { default: copy.meta.title, template: "%s | VM Bridge" },
+  description: copy.meta.description,
   icons: { icon: "/logo.svg" },
 };
 
-export const viewport: Viewport = { themeColor: "#000000" };
+export const viewport: Viewport = { themeColor: "#070708" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${mona.variable} ${fragment.variable}`}>
+    <html lang="en" className={`${geist.variable} ${geistMono.variable}`}>
       <body>{children}</body>
     </html>
   );

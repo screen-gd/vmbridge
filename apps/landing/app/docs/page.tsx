@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { Footer, Nav } from "@/components/Chrome";
 import { ProviderLogo } from "@/components/brand";
 import { Command, CopyButton } from "@/components/CopyButton";
-import { DocsFlow } from "@/components/DocsFlow";
 import { DocsNav, type DocsSection } from "@/components/DocsNav";
+import { Topology } from "@/components/Topology";
 import { commands, install, providers } from "@/lib/data";
 
 export const metadata: Metadata = { title: "Docs" };
@@ -43,7 +43,7 @@ function Code({ children }: { children: string }) {
 
 function Block({ children }: { children: string }) {
   return (
-    <div className="relative rounded-lg border bg-card">
+    <div className="relative rounded-lg bg-card">
       <pre className="overflow-x-auto p-4 pr-12 font-mono text-[13px] leading-6 text-foreground">{children}</pre>
       <CopyButton text={children} className="absolute top-2 right-2" />
     </div>
@@ -96,13 +96,13 @@ export default function Docs() {
   return (
     <>
       <Nav />
-      <div className="mx-auto flex max-w-6xl gap-12 px-4 sm:px-6">
+      <div className="mx-auto flex max-w-[1120px] gap-12 px-5 sm:px-8">
         <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-52 shrink-0 overflow-y-auto py-10 lg:block">
           <DocsNav sections={sections} />
         </aside>
 
         <main className="min-w-0 flex-1 py-10 lg:max-w-3xl">
-          <h1 className="text-4xl font-semibold tracking-tight">How VM Bridge works</h1>
+          <h1 className="title">How VM Bridge works</h1>
 
           <details className="mt-6 rounded-lg border bg-card lg:hidden">
             <summary className="cursor-pointer px-4 py-3 text-sm font-medium">On this page</summary>
@@ -207,7 +207,9 @@ bun run build          # dist/vmbridge
                 T3 Code keeps one connection to VM Bridge. VM Bridge keeps one connection to the T3 server on each awake VM, and routes each request
                 by its project or thread.
               </p>
-              <DocsFlow />
+              <div className="not-prose my-6">
+                <Topology />
+              </div>
               <List
                 items={[
                   <>

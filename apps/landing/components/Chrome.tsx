@@ -1,28 +1,32 @@
 import { GithubIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import Link from "next/link";
+import { copy } from "@/lib/copy";
 import { github } from "@/lib/data";
 import { Logo } from "./brand";
 
+const linkClass = "text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground";
+
+/** The site header: brand on the left, section links and GitHub on the right. */
 export function Nav() {
   return (
-    <header className="sticky top-0 z-40 border-b bg-black/70 backdrop-blur-md">
-      <div className="mx-auto flex h-14 max-w-6xl items-center gap-6 px-4 sm:px-6">
-        <Link href="/" className="flex items-center gap-2.5 font-semibold">
-          <Logo className="size-7" />
+    <header className="sticky top-0 z-40 h-14 bg-background/70 backdrop-blur-xl backdrop-saturate-150">
+      <div className="mx-auto flex h-full max-w-[1120px] items-center gap-6 px-5 sm:px-8">
+        <Link href="/" className="flex items-center gap-2.5 font-medium">
+          <Logo className="size-6" />
           VM Bridge
         </Link>
-        <nav className="ml-auto flex items-center gap-1 text-sm text-muted-foreground sm:gap-2">
-          <Link href="/#how" className="hidden rounded-md px-2.5 py-1.5 transition hover:text-foreground sm:block">
-            How it works
+        <nav className="ml-auto flex items-center gap-5">
+          <Link href="/#how" className={`hidden sm:block ${linkClass}`}>
+            {copy.nav.how}
           </Link>
-          <Link href="/#providers" className="hidden rounded-md px-2.5 py-1.5 transition hover:text-foreground sm:block">
-            Providers
+          <Link href="/#providers" className={`hidden sm:block ${linkClass}`}>
+            {copy.nav.providers}
           </Link>
-          <Link href="/docs" className="rounded-md px-2.5 py-1.5 transition hover:text-foreground">
-            Docs
+          <Link href="/docs" className={linkClass}>
+            {copy.nav.docs}
           </Link>
-          <a href={github} aria-label="GitHub" className="grid size-8 place-items-center rounded-md transition hover:text-foreground">
+          <a href={github} aria-label={copy.nav.github} className={linkClass}>
             <HugeiconsIcon icon={GithubIcon} size={18} />
           </a>
         </nav>
@@ -31,18 +35,19 @@ export function Nav() {
   );
 }
 
+/** The site footer: mark, one line, docs and GitHub links. */
 export function Footer() {
   return (
     <footer className="border-t">
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-4 px-4 py-8 text-sm text-muted-foreground sm:px-6">
-        <Logo className="size-6" />
-        <span>VM Bridge</span>
+      <div className="mx-auto flex max-w-[1120px] flex-wrap items-center gap-4 px-5 py-10 sm:px-8">
+        <Logo className="size-5" />
+        <span className="text-sm text-muted-foreground">{copy.footer.line}</span>
         <div className="ml-auto flex gap-5">
-          <Link href="/docs" className="transition hover:text-foreground">
-            Docs
+          <Link href="/docs" className={linkClass}>
+            {copy.nav.docs}
           </Link>
-          <a href={github} className="transition hover:text-foreground">
-            GitHub
+          <a href={github} className={linkClass}>
+            {copy.nav.github}
           </a>
         </div>
       </div>

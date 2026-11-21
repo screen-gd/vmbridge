@@ -107,3 +107,27 @@ export const agents = [
   { id: "claude", name: "Claude", logo: "/agents/claude.svg" },
 ] as const;
 export type Agent = (typeof agents)[number];
+
+/** Real terminal output beside each step, index-matched to copy.steps.items. */
+export const stepLogs: string[][] = [
+  ["$ vmbridge", "VM Bridge 0.2.0 is running.", "  This machine   http://127.0.0.1:3774/dashboard"],
+  ["Provider boxd connected", "Size: 2 vCPU, 8 GB", "Sleep after 5 idle minutes"],
+  ['Pairing link "MacBook" created', "MacBook paired", "iPhone paired"],
+  ["Creating a VM for Hello-World", "Installing T3, Codex and Claude", "vm-df9bca ready on boxd", "Cloned Hello-World"],
+];
+
+export interface Route {
+  /** Real RPC names from apps/server/src/gateway/rpc.ts. */
+  call: string;
+  target: string;
+  time: string;
+  kind: "bridge" | "vm";
+}
+
+/** A short request log showing what the bridge answers itself and what goes to a VM. */
+export const routes: Route[] = [
+  { call: "server.getConfig", target: "bridge", time: "1 ms", kind: "bridge" },
+  { call: "orchestration.getThreadProjection", target: "bridge, saved copy", time: "< 1 ms", kind: "bridge" },
+  { call: "filesystem.browse", target: "vm-df9bca", time: "160 ms", kind: "vm" },
+  { call: "orchestration.dispatchCommand", target: "vm-df9bca", time: "streaming", kind: "vm" },
+];

@@ -22,7 +22,7 @@ export function ProviderLogo({ provider, className = "size-8" }: { provider: Pro
       style={{ background: provider.tile }}
     >
       {/* eslint-disable-next-line @next/next/no-img-element -- tiny static marks */}
-      <img src={provider.logo} alt="" className="size-full object-contain" style={{ padding: provider.inset }} draggable={false} />
+      <img src={provider.logo} alt="" className="size-full object-contain grayscale" style={{ padding: provider.inset }} draggable={false} />
     </span>
   );
 }
@@ -30,15 +30,15 @@ export function ProviderLogo({ provider, className = "size-8" }: { provider: Pro
 /** The real T3 Code app icon, from the T3 Code repository. */
 export function T3Logo({ className = "size-8" }: { className?: string }) {
   // eslint-disable-next-line @next/next/no-img-element -- tiny static mark
-  return <img src="/t3code.svg" alt="T3 Code" className={`shrink-0 rounded-[22%] ring-1 ring-white/10 ${className}`} draggable={false} />;
+  return <img src="/t3code.svg" alt="T3 Code" className={`shrink-0 rounded-[22%] ring-1 ring-white/10 grayscale ${className}`} draggable={false} />;
 }
 
 /** An agent's mark on a dark tile, like the provider logos. */
 export function AgentLogo({ agent, className = "size-8" }: { agent: Agent; className?: string }) {
   return (
-    <span className={`grid shrink-0 place-items-center rounded-lg bg-[#141414] p-[18%] ring-1 ring-white/10 ${className}`}>
+    <span className={`grid shrink-0 place-items-center rounded-lg bg-muted p-[18%] ring-1 ring-white/10 ${className}`}>
       {/* eslint-disable-next-line @next/next/no-img-element -- tiny static marks */}
-      <img src={agent.logo} alt={agent.name} className="size-full object-contain" draggable={false} />
+      <img src={agent.logo} alt={agent.name} className="size-full object-contain grayscale" draggable={false} />
     </span>
   );
 }
