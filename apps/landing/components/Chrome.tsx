@@ -12,7 +12,7 @@ const linkClass = "font-mono text-[13px] text-muted-foreground transition-colors
 export function Nav() {
   return (
     <header className="sticky top-0 z-40 border-b bg-background">
-      <div className={`${frame} flex h-14 items-center gap-6 px-5 sm:px-7`}>
+      <div className={`${frame} flex h-16 items-center gap-6 px-6 sm:px-10`}>
         <Link href="/" className="flex items-center gap-2.5 font-medium">
           <Logo className="size-6" />
           VM Bridge
@@ -40,7 +40,7 @@ export function Nav() {
 export function Footer() {
   return (
     <footer className="border-t">
-      <div className={`${frame} flex h-16 items-center gap-4 px-5 sm:px-7`}>
+      <div className={`${frame} flex h-20 items-center gap-4 px-6 sm:px-10`}>
         <Logo className="size-5" />
         <span className="text-sm text-muted-foreground">{copy.footer.line}</span>
         <div className="ml-auto flex gap-5">

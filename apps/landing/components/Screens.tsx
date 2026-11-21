@@ -34,15 +34,15 @@ export function Screens() {
                 role="tab"
                 aria-selected={current}
                 onClick={() => setActive(shot.id)}
-                className={`flex-1 border-b px-5 py-4 text-left transition-colors duration-150 last:border-b-0 sm:px-7 ${
+                className={`flex-1 border-b px-6 py-8 text-left transition-colors duration-150 last:border-b-0 sm:px-10 ${
                   current ? "bg-card" : ""
                 }`}
               >
-                <span className="block font-mono text-[13px]">
+                <span className="block font-mono text-[14px]">
                   {current ? <span className="text-primary">{"> "}</span> : null}
                   <span className={current ? "text-foreground" : "text-muted-foreground"}>{tabs[shot.id].label}</span>
                 </span>
-                <span className="mt-1 block text-sm text-muted-foreground">{tabs[shot.id].caption}</span>
+                <span className="mt-2 block text-[15px] leading-relaxed text-muted-foreground">{tabs[shot.id].caption}</span>
               </button>
             );
           })}
@@ -58,7 +58,7 @@ export function Screens() {
                   role="tab"
                   aria-selected={current}
                   onClick={() => setActive(shot.id)}
-                  className="shrink-0 px-4 py-3 font-mono text-[13px] whitespace-nowrap"
+                  className="shrink-0 px-4 py-3 font-mono text-[14px] whitespace-nowrap"
                 >
                   {current ? <span className="text-primary">{"> "}</span> : null}
                   <span className={current ? "text-foreground" : "text-muted-foreground"}>{tabs[shot.id].label}</span>
@@ -81,7 +81,7 @@ export function Screens() {
               ))}
             </div>
           </Panel>
-          <div className={`${cell} border-t text-sm text-muted-foreground lg:hidden`}>{tabs[active].caption}</div>
+          <div className={`${cell} border-t text-[15px] leading-relaxed text-muted-foreground lg:hidden`}>{tabs[active].caption}</div>
         </div>
       </div>
     </Section>

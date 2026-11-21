@@ -5,10 +5,10 @@ export const container = "mx-auto w-full max-w-[1560px]";
 export const frame = `${container} sm:border-x`;
 
 /** The padding of one grid cell. */
-export const cell = "p-5 sm:p-7";
+export const cell = "p-6 sm:p-10";
 
 /** The two button looks: flat mono pills, colour changes only. */
 export const primaryButton =
-  "inline-flex h-9 items-center gap-2 rounded-md bg-white px-3.5 font-mono text-[13px] text-black transition-colors duration-150 hover:bg-white/85 active:bg-white/70";
+  "inline-flex h-10 items-center gap-2 rounded-md bg-white px-4 font-mono text-[13px] text-black transition-colors duration-150 hover:bg-white/85 active:bg-white/70";
 export const secondaryButton =
-  "inline-flex h-9 items-center gap-2 rounded-md bg-muted px-3.5 font-mono text-[13px] text-foreground transition-colors duration-150 hover:bg-white/10";
+  "inline-flex h-10 items-center gap-2 rounded-md bg-muted px-4 font-mono text-[13px] text-foreground transition-colors duration-150 hover:bg-white/10";

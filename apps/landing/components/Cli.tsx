@@ -27,7 +27,7 @@ export function Cli() {
                 type="button"
                 aria-current={current || undefined}
                 onClick={() => setSelected(i)}
-                className={`block w-full border-b px-5 py-3.5 text-left transition-colors duration-150 last:border-b-0 sm:px-7 ${
+                className={`block w-full border-b px-6 py-6 text-left transition-colors duration-150 last:border-b-0 sm:px-10 ${
                   current ? "bg-card" : ""
                 }`}
               >
@@ -40,7 +40,7 @@ export function Cli() {
                     </span>
                   ))}
                 </code>
-                <span className="mt-1 block text-sm text-muted-foreground">{c.does}</span>
+                <span className="mt-2 block text-[15px] leading-relaxed text-muted-foreground">{c.does}</span>
               </button>
             );
           })}

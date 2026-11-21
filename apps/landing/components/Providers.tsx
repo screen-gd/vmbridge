@@ -19,7 +19,7 @@ const spots = providers.map((provider, i) => {
 /** One label/value line inside the provider detail column. */
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-baseline justify-between gap-6 border-t px-5 py-3.5 sm:px-7">
+    <div className="flex items-baseline justify-between gap-6 border-t px-6 py-5 sm:px-10">
       <dt className="text-sm text-faint">{label}</dt>
       <dd className="text-right font-mono text-[13px] text-foreground">{value}</dd>
     </div>
@@ -45,8 +45,8 @@ export function Providers() {
   return (
     <Section id="providers" title={copy.providers.title} body={copy.providers.body}>
       <div className="grid grid-cols-[minmax(0,1fr)] lg:grid-cols-12">
-        <div className={`${cell} lg:col-span-7`}>
-          <div ref={orbit} className="relative mx-auto aspect-square w-full max-w-[26rem]">
+        <div className={`${cell} py-16 sm:py-16 lg:col-span-7`}>
+          <div ref={orbit} className="relative mx-auto aspect-square w-full max-w-[30rem]">
             <svg viewBox="0 0 100 100" className="absolute inset-0 size-full" aria-hidden>
               <circle
                 cx={50}
@@ -127,7 +127,7 @@ export function Providers() {
               <Row label={copy.providers.columns.wake} value={wake ?? missing} />
               <Row label={copy.providers.columns.latency} value={measured ? `${measured.browseMs} ms` : missing} />
             </dl>
-            <div className="mt-auto border-t px-5 py-4 text-[13px] text-faint sm:px-7">{copy.providers.note}</div>
+            <div className="mt-auto border-t px-6 py-6 text-[13px] text-faint sm:px-10">{copy.providers.note}</div>
           </div>
         </div>
       </div>

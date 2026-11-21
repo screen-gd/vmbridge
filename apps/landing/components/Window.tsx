@@ -14,7 +14,7 @@ export function Panel({
 }) {
   return (
     <div className={className}>
-      <div className="flex h-9 items-center justify-between gap-3 border-b px-4 font-mono text-[11px] text-faint">
+      <div className="flex h-11 items-center justify-between gap-3 border-b px-6 font-mono text-[12px] text-faint sm:px-10">
         <span className="min-w-0 truncate">{label}</span>
         {aside}
       </div>

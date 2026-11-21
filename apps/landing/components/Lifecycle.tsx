@@ -117,8 +117,9 @@ export function Lifecycle() {
   return (
     <Section id="lifecycle" title={copy.lifecycle.title} body={copy.lifecycle.body}>
       <div className="grid grid-cols-[minmax(0,1fr)] lg:grid-cols-12">
-        <div className="lg:col-span-7">
+        <div className="flex lg:col-span-7">
           <Panel
+            className="flex w-full flex-col"
             label="t3 code / Hello-World"
             aside={
               <span className="flex h-6 shrink-0 items-center gap-1.5 rounded-md bg-muted px-2 font-mono text-[11px] whitespace-nowrap text-muted-foreground">
@@ -131,15 +132,15 @@ export function Lifecycle() {
             {phase === "idle" ? (
               <div className="h-px origin-left bg-primary" style={{ animation: "drain 8000ms linear forwards" }} />
             ) : null}
-            <div className="flex h-[22rem] flex-col">
-              <div className="flex flex-1 flex-col justify-end gap-3 overflow-hidden p-4 [mask-image:linear-gradient(to_bottom,transparent,black_3.5rem)]">
+            <div className="flex min-h-[28rem] flex-1 flex-col">
+              <div className="flex min-h-0 flex-1 basis-0 flex-col justify-end gap-5 overflow-hidden p-6 [mask-image:linear-gradient(to_bottom,transparent,black_3.5rem)] sm:p-10">
                 {items.map((item) =>
                   item.kind === "user" ? (
-                    <div key={item.id} className="ml-auto max-w-[80%] rounded-md bg-muted px-3.5 py-2 text-sm" style={item.animate ? rise : undefined}>
+                    <div key={item.id} className="ml-auto max-w-[80%] rounded-md bg-muted px-3.5 py-2 text-[15px]" style={item.animate ? rise : undefined}>
                       {item.text}
                     </div>
                   ) : item.kind === "agent" ? (
-                    <div key={item.id} className="max-w-[85%] text-pretty text-sm text-muted-foreground" style={item.animate ? rise : undefined}>
+                    <div key={item.id} className="max-w-[85%] text-pretty text-[15px] text-muted-foreground" style={item.animate ? rise : undefined}>
                       {item.text}
                     </div>
                   ) : (
@@ -150,8 +151,8 @@ export function Lifecycle() {
                   ),
                 )}
               </div>
-              <div className="m-3 mt-0 flex h-11 items-center gap-2 rounded-md bg-muted pr-1.5 pl-3.5">
-                <span aria-hidden className="flex-1 truncate text-sm text-muted-foreground">
+              <div className="mx-6 mt-0 mb-6 flex h-12 items-center gap-2 rounded-md bg-muted pr-1.5 pl-3.5 sm:mx-10 sm:mb-10">
+                <span aria-hidden className="flex-1 truncate text-[15px] text-muted-foreground">
                   {message}
                 </span>
                 <button
@@ -173,14 +174,14 @@ export function Lifecycle() {
             <div
               key={state.name}
               aria-current={i === current || undefined}
-              className={`flex flex-1 gap-3 border-b px-5 py-4 transition-opacity duration-200 last:border-b-0 sm:px-7 ${
+              className={`flex flex-1 gap-3 border-b px-6 py-7 transition-opacity duration-200 last:border-b-0 sm:px-10 ${
                 i === current ? "bg-card" : "opacity-60"
               }`}
             >
               <span className={`mt-1.5 shrink-0 ${markers[i]}`} />
               <div>
-                <div className="text-sm font-medium">{state.name}</div>
-                <p className="mt-1 text-pretty text-sm text-muted-foreground">{state.body}</p>
+                <div className="text-base font-medium">{state.name}</div>
+                <p className="mt-2 text-pretty text-[15px] leading-relaxed text-muted-foreground">{state.body}</p>
               </div>
             </div>
           ))}

@@ -208,8 +208,8 @@ export function Topology({ stacked = false }: { stacked?: boolean }) {
   };
 
   return (
-    <div ref={panel} id="topology" className={`grid grid-cols-[minmax(0,1fr)] ${stacked ? "" : "lg:grid-cols-[minmax(0,1fr)_26rem]"}`}>
-      <div className={`relative ${narrow ? "" : "h-[20rem]"}`} style={narrow ? { aspectRatio: `${layout.w} / ${layout.h}` } : undefined}>
+    <div ref={panel} id="topology" className={`grid grid-cols-[minmax(0,1fr)] ${stacked ? "" : "lg:grid-cols-[minmax(0,1fr)_31rem]"}`}>
+      <div className={`relative ${narrow ? "" : "h-[26rem]"}`} style={narrow ? { aspectRatio: `${layout.w} / ${layout.h}` } : undefined}>
         {!narrow ? (
           <>
             <span className="absolute top-3 left-[14%] -translate-x-1/2 font-mono text-[11px] text-faint">{copy.diagram.devices}</span>
@@ -251,7 +251,7 @@ export function Topology({ stacked = false }: { stacked?: boolean }) {
 
       <div className={stacked ? "border-t" : "border-t lg:border-t-0 lg:border-l"}>
         <Panel label="events" aside={copy.hero.hint}>
-          <div aria-live="polite" className="p-4 font-mono text-[12px] leading-6">
+          <div aria-live="polite" className="p-6 font-mono text-[13px] leading-7 sm:px-10">
             {shown.map((row) => (
               <div
                 key={row.id}
