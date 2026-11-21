@@ -9,6 +9,7 @@
   --muted-foreground: rgb(255 255 255 / 0.62);
   --faint: rgb(255 255 255 / 0.38);
   --border: rgb(255 255 255 / 0.08);
+  --rule: rgb(255 255 255 / 0.2);
   --primary: #8b5cf6;
   --radius: 6px;
 }
@@ -25,6 +26,7 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-faint: var(--faint);
   --color-border: var(--border);
+  --color-rule: var(--rule);
   --color-primary: var(--primary);
 }
 
@@ -90,7 +92,7 @@
 
 /* Section headings. */
 @utility title {
-  font-size: clamp(1.75rem, 2.4vw, 2.25rem);
+  font-size: clamp(1.875rem, 2.8vw, 2.5rem);
   line-height: 1.15;
   letter-spacing: -0.02em;
   font-weight: 500;
@@ -99,7 +101,7 @@
 
 /* Diagonal hairline fill used as a spacer strip between sections. */
 @utility hatch {
-  background-image: repeating-linear-gradient(-45deg, rgb(255 255 255 / 0.05) 0 1px, transparent 1px 7px);
+  background-image: repeating-linear-gradient(-45deg, rgb(255 255 255 / 0.09) 0 1px, transparent 1px 7px);
 }
 
 @keyframes rise {

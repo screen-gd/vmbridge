@@ -11,7 +11,7 @@ import { Panel } from "./Window";
 /** The landing header: one cell — pitch and install command on the left, a terminal you can type in on the right. */
 export function Hero() {
   return (
-    <div className="flex items-center border-b lg:min-h-[calc(100svh-3.5rem-2rem)]">
+    <div className="flex items-center lg:min-h-[calc(100svh-3.5rem-2rem)]">
       <div className="grid w-full grid-cols-[minmax(0,1fr)] gap-10 p-6 sm:p-8 lg:grid-cols-12 lg:items-center">
         <div className="lg:col-span-7">
           <h1 className="display">{copy.hero.title}</h1>

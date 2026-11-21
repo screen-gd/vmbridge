@@ -39,7 +39,7 @@ export function Nav() {
 /** The site footer: mark, one line, docs and GitHub links. */
 export function Footer() {
   return (
-    <footer className="border-t pb-8">
+    <footer className="border-t border-rule pb-8">
       <div className={`${frame} flex h-16 items-center gap-4 px-6 sm:px-8`}>
         <Logo className="size-5" />
         <span className="text-sm text-muted-foreground">{copy.footer.line}</span>
