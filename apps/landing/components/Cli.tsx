@@ -27,7 +27,7 @@ export function Cli() {
                 type="button"
                 aria-current={current || undefined}
                 onClick={() => setSelected(i)}
-                className={`block w-full border-b px-6 py-6 text-left transition-colors duration-150 last:border-b-0 sm:px-10 ${
+                className={`block w-full border-b px-6 py-6 text-left transition-colors duration-150 last:border-b-0 sm:px-8 ${
                   current ? "bg-card" : ""
                 }`}
               >

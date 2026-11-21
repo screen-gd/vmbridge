@@ -15,7 +15,7 @@ export function Steps() {
               <div className="mt-5 text-[17px] font-medium">{step.title}</div>
               <p className="mt-3 text-pretty text-[15px] leading-relaxed text-muted-foreground">{step.body}</p>
             </div>
-            <div className="mt-auto h-[9.5rem] overflow-hidden border-t bg-card px-6 py-5 font-mono text-[12px] leading-6 break-words whitespace-pre-wrap sm:px-10">
+            <div className="mt-auto h-[9.5rem] overflow-hidden border-t bg-card px-6 py-5 font-mono text-[12px] leading-6 break-words whitespace-pre-wrap sm:px-8">
               {stepLogs[i].map((line, j) => (
                 <div key={j} className={line.startsWith("$ ") ? "text-foreground" : "text-muted-foreground"}>
                   {line}

@@ -34,7 +34,7 @@ export function Screens() {
                 role="tab"
                 aria-selected={current}
                 onClick={() => setActive(shot.id)}
-                className={`flex-1 border-b px-6 py-8 text-left transition-colors duration-150 last:border-b-0 sm:px-10 ${
+                className={`flex-1 border-b px-6 py-6 text-left transition-colors duration-150 last:border-b-0 sm:px-8 ${
                   current ? "bg-card" : ""
                 }`}
               >
@@ -74,7 +74,7 @@ export function Screens() {
                   src={shot.src}
                   alt={tabs[shot.id].caption}
                   fill
-                  sizes="(min-width: 1560px) 1020px, (min-width: 1024px) 67vw, 100vw"
+                  sizes="(min-width: 1280px) 840px, (min-width: 1024px) 67vw, 100vw"
                   className={`object-contain transition-opacity duration-200 ${shot.id === active ? "opacity-100" : "opacity-0"}`}
                   priority={shot.id === "canvas"}
                 />

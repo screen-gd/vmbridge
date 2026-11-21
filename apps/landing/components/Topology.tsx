@@ -5,6 +5,7 @@ import { copy } from "@/lib/copy";
 import { providers, type Provider, type ProviderId } from "@/lib/data";
 import { useInView, useMedia, useReducedMotion } from "@/lib/hooks";
 import { Logo, ProviderLogo, T3Logo } from "./brand";
+import { useSiteState } from "./SiteState";
 import { Panel } from "./Window";
 
 type VmState = "online" | "asleep" | "waking";
@@ -179,7 +180,8 @@ export function Topology({ stacked = false }: { stacked?: boolean }) {
 
   const panel = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
-  const packets = useInView(panel) && !reduced;
+  const { phase } = useSiteState();
+  const packets = useInView(panel) && !reduced && phase !== "asleep";
   const narrow = useMedia("(max-width: 767px)");
   const layout = narrow ? layouts.narrow : layouts.wide;
   const shown = stacked ? rows.slice(-3) : rows.slice(-8);
@@ -208,7 +210,7 @@ export function Topology({ stacked = false }: { stacked?: boolean }) {
   };
 
   return (
-    <div ref={panel} id="topology" className={`grid grid-cols-[minmax(0,1fr)] ${stacked ? "" : "lg:grid-cols-[minmax(0,1fr)_31rem]"}`}>
+    <div ref={panel} id="topology" className={`grid grid-cols-[minmax(0,1fr)] ${stacked ? "" : "lg:grid-cols-[minmax(0,1fr)_26rem]"}`}>
       <div className={`relative ${narrow ? "" : "h-[26rem]"}`} style={narrow ? { aspectRatio: `${layout.w} / ${layout.h}` } : undefined}>
         {!narrow ? (
           <>
@@ -251,7 +253,7 @@ export function Topology({ stacked = false }: { stacked?: boolean }) {
 
       <div className={stacked ? "border-t" : "border-t lg:border-t-0 lg:border-l"}>
         <Panel label="events" aside={copy.hero.hint}>
-          <div aria-live="polite" className="p-6 font-mono text-[13px] leading-7 sm:px-10">
+          <div aria-live="polite" className="p-6 font-mono text-[13px] leading-7 sm:px-8">
             {shown.map((row) => (
               <div
                 key={row.id}

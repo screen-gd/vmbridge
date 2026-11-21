@@ -132,6 +132,17 @@ export const copy = {
     note: "Measured on fresh VMs in live runs. Round trip is filesystem.browse. Boat is unmeasured.",
     /** 16. Fills a cell with no measurement. */
     unmeasured: "Not measured",
+    /** The wake-race panel under the provider grid. */
+    race: {
+      /** 12 */
+      label: "wake race",
+      /** 8 */
+      start: "Race",
+      /** 8 */
+      again: "Again",
+      /** 12 */
+      speed: "2x speed",
+    },
   },
 
   /** Screenshots of the dashboard behind four tabs. */
@@ -164,6 +175,49 @@ export const copy = {
     body: "One command puts the server, dashboard, and CLI in ~/.local/bin. Run it again to update.",
     /** 20 */
     docs: "Read the docs",
+  },
+
+  /** The fixed status line: the page's own sleep state, like a VM's. {n} is the countdown. */
+  status: {
+    /** 10 */
+    awake: "awake",
+    /** 30 */
+    idle: "idle, sleeping in {n}s",
+    /** 30 */
+    asleep: "asleep. move to wake",
+    /** 10 */
+    waking: "waking",
+    /** 30 */
+    hint: "type sleep in the terminal",
+  },
+
+  /** The hero terminal's interactive parts. */
+  terminal: {
+    /** 12. Shown in the terminal strip once it can be typed in. */
+    hint: "try: help",
+    /** 30. Accessible name of the prompt input. */
+    label: "Type a command",
+    /** 30 */
+    sleeping: "putting the page to sleep",
+    /** 10 */
+    awake: "awake",
+    /** 30 */
+    racing: "racing the providers",
+    /** 40. {cmd} is the unknown first word. */
+    notFound: "zsh: command not found: {cmd}",
+    /** Command help lines: the command, then a two-to-four word description. */
+    help: [
+      ["vmbridge", "start the bridge"],
+      ["vmbridge stop", "stop the bridge"],
+      ["vmbridge service install", "run at login"],
+      ["vmbridge service uninstall", "drop service"],
+      ["vmbridge key", "new dashboard key"],
+      ["help", "list commands"],
+      ["sleep", "put page to sleep"],
+      ["wake", "wake the page"],
+      ["race", "race the providers"],
+      ["clear", "clear the terminal"],
+    ],
   },
 
   footer: {

@@ -1,11 +1,11 @@
-/** The page container: centred, full width, capped at 1560px. Cells own their padding. */
-export const container = "mx-auto w-full max-w-[1560px]";
+/** The page container: centred, full width, capped at 1280px. Cells own their padding. */
+export const container = "mx-auto w-full max-w-[1280px]";
 
 /** The outer frame: the container plus the two vertical hairlines that rule the whole page. */
 export const frame = `${container} sm:border-x`;
 
 /** The padding of one grid cell. */
-export const cell = "p-6 sm:p-10";
+export const cell = "p-6 sm:p-8";
 
 /** The two button looks: flat mono pills, colour changes only. */
 export const primaryButton =

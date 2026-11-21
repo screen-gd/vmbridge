@@ -133,7 +133,7 @@ export function Lifecycle() {
               <div className="h-px origin-left bg-primary" style={{ animation: "drain 8000ms linear forwards" }} />
             ) : null}
             <div className="flex min-h-[28rem] flex-1 flex-col">
-              <div className="flex min-h-0 flex-1 basis-0 flex-col justify-end gap-5 overflow-hidden p-6 [mask-image:linear-gradient(to_bottom,transparent,black_3.5rem)] sm:p-10">
+              <div className="flex min-h-0 flex-1 basis-0 flex-col justify-end gap-5 overflow-hidden p-6 [mask-image:linear-gradient(to_bottom,transparent,black_3.5rem)] sm:p-8">
                 {items.map((item) =>
                   item.kind === "user" ? (
                     <div key={item.id} className="ml-auto max-w-[80%] rounded-md bg-muted px-3.5 py-2 text-[15px]" style={item.animate ? rise : undefined}>
@@ -151,7 +151,7 @@ export function Lifecycle() {
                   ),
                 )}
               </div>
-              <div className="mx-6 mt-0 mb-6 flex h-12 items-center gap-2 rounded-md bg-muted pr-1.5 pl-3.5 sm:mx-10 sm:mb-10">
+              <div className="mx-6 mt-0 mb-6 flex h-12 items-center gap-2 rounded-md bg-muted pr-1.5 pl-3.5 sm:mx-8 sm:mb-8">
                 <span aria-hidden className="flex-1 truncate text-[15px] text-muted-foreground">
                   {message}
                 </span>
@@ -174,7 +174,7 @@ export function Lifecycle() {
             <div
               key={state.name}
               aria-current={i === current || undefined}
-              className={`flex flex-1 gap-3 border-b px-6 py-7 transition-opacity duration-200 last:border-b-0 sm:px-10 ${
+              className={`flex flex-1 gap-3 border-b px-6 py-6 transition-opacity duration-200 last:border-b-0 sm:px-8 ${
                 i === current ? "bg-card" : "opacity-60"
               }`}
             >

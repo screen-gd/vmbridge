@@ -2,23 +2,22 @@ import { ArrowRight01Icon, GithubIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import Link from "next/link";
 import { copy } from "@/lib/copy";
-import { github, heroScript, install } from "@/lib/data";
+import { github, install } from "@/lib/data";
 import { primaryButton, secondaryButton } from "@/lib/styles";
 import { Command } from "./CopyButton";
-import { TerminalBody } from "./TerminalWindow";
-import { Topology } from "./Topology";
+import { HeroTerminal } from "./HeroTerminal";
 import { Panel } from "./Window";
 
-/** The landing header: pitch and install command on the left, a live terminal on the right, wiring below. */
+/** The landing header: one cell — pitch and install command on the left, a terminal you can type in on the right. */
 export function Hero() {
   return (
-    <>
-      <div className="grid grid-cols-[minmax(0,1fr)] border-b lg:grid-cols-12 lg:min-h-[36rem]">
-        <div className="flex flex-col justify-center p-6 sm:p-10 lg:col-span-7 lg:py-28">
+    <div className="flex items-center border-b lg:min-h-[calc(100svh-3.5rem-2rem)]">
+      <div className="grid w-full grid-cols-[minmax(0,1fr)] gap-10 p-6 sm:p-8 lg:grid-cols-12 lg:items-center">
+        <div className="lg:col-span-7">
           <h1 className="display">{copy.hero.title}</h1>
           <p className="mt-6 max-w-[34rem] text-pretty text-[18px] text-muted-foreground">{copy.hero.body}</p>
           <div className="mt-10">
-            <Command text={install} />
+            <Command text={install} className="lg:text-[12px]" />
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
             <Link href="/docs" className={primaryButton}>
@@ -31,13 +30,14 @@ export function Hero() {
             </a>
           </div>
         </div>
-        <div className="flex flex-col border-t bg-card lg:col-span-5 lg:border-t-0 lg:border-l">
-          <Panel label="zsh" className="flex h-full flex-col">
-            <TerminalBody script={heroScript} className="flex-1 sm:!text-[12px]" />
-          </Panel>
+        <div className="lg:col-span-5">
+          <div className="overflow-hidden rounded-md border bg-card">
+            <Panel label="zsh" aside={<span>{copy.terminal.hint}</span>}>
+              <HeroTerminal />
+            </Panel>
+          </div>
         </div>
       </div>
-      <Topology />
-    </>
+    </div>
   );
 }

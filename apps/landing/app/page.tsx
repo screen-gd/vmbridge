@@ -6,14 +6,15 @@ import { Lifecycle } from "@/components/Lifecycle";
 import { Providers } from "@/components/Providers";
 import { Routing } from "@/components/Routing";
 import { Screens } from "@/components/Screens";
+import { LandingMain, SiteStateProvider } from "@/components/SiteState";
+import { StatusLine } from "@/components/StatusLine";
 import { Steps } from "@/components/Steps";
-import { frame } from "@/lib/styles";
 
 export default function Home() {
   return (
-    <>
+    <SiteStateProvider>
       <Nav />
-      <main className={frame}>
+      <LandingMain>
         <Hero />
         <Steps />
         <Lifecycle />
@@ -22,8 +23,9 @@ export default function Home() {
         <Screens />
         <Cli />
         <Install />
-      </main>
+      </LandingMain>
       <Footer />
-    </>
+      <StatusLine />
+    </SiteStateProvider>
   );
 }

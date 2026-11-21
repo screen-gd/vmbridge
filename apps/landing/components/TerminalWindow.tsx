@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useInView, useReducedMotion } from "@/lib/hooks";
+import { useSiteState } from "./SiteState";
 
 const cursor = (blink: boolean) => (
   <span
@@ -25,6 +26,7 @@ export function TerminalBody({ script, rows, className = "" }: { script: string[
     if (onScreen) setInView(true);
   }, [onScreen]);
   const reduced = useReducedMotion();
+  const { phase } = useSiteState();
   const [visible, setVisible] = useState(0);
   const [typed, setTyped] = useState(0);
   const [done, setDone] = useState(false);
@@ -70,7 +72,7 @@ export function TerminalBody({ script, rows, className = "" }: { script: string[
   return (
     <div
       ref={ref}
-      className={`p-6 font-mono text-[11px] leading-5 break-words whitespace-pre-wrap sm:p-10 sm:text-[13px] sm:leading-7 ${className}`}
+      className={`p-6 font-mono text-[11px] leading-5 break-words whitespace-pre-wrap sm:p-8 sm:text-[13px] sm:leading-7 ${className}`}
       style={{ minHeight: `${Math.max(11, lineCount * 1.75 + 5)}rem` }}
     >
       {script.slice(0, visible).map((text, i) =>
@@ -87,12 +89,12 @@ export function TerminalBody({ script, rows, className = "" }: { script: string[
       {!done && visible < script.length && script[visible].startsWith("$ ") ? (
         <div className={line}>
           <span className="text-faint">$</span> {script[visible].slice(2, 2 + typed)}
-          {cursor(true)}
+          {cursor(phase !== "asleep")}
         </div>
       ) : null}
       {done ? (
         <div className={line}>
-          <span className="text-faint">$</span> {cursor(!reduced)}
+          <span className="text-faint">$</span> {cursor(!reduced && phase !== "asleep")}
         </div>
       ) : null}
     </div>
