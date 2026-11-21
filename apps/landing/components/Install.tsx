@@ -12,9 +12,7 @@ export function Install() {
   return (
     <Section id="install" title={copy.install.title} body={copy.install.body}>
       <div className="flex flex-wrap items-center gap-3">
-        <div className="min-w-0 max-w-2xl flex-1 basis-80">
-          <Command text={install} />
-        </div>
+        <Command text={install} />
         <Link href="/docs" className={primaryButton}>
           {copy.install.docs}
           <HugeiconsIcon icon={ArrowRight01Icon} size={16} />

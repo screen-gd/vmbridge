@@ -70,7 +70,7 @@ export function TerminalWindow({ script, rows, className = "" }: { script: strin
     <div ref={ref} className={className}>
       <Window title="zsh" className="h-full">
         <div
-          className="overflow-x-auto p-4 font-mono text-[12.5px] leading-6 whitespace-pre"
+          className="p-4 font-mono text-[12.5px] leading-6 break-words whitespace-pre-wrap"
           style={{ minHeight: `${Math.max(11, lineCount * 1.5 + 2)}rem` }}
         >
           {script.slice(0, visible).map((line, i) =>

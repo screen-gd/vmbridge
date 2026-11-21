@@ -23,12 +23,12 @@ export function CopyButton({ text, className = "" }: { text: string; className?:
   );
 }
 
-/** A one-line shell command with a copy button. */
+/** A one-line shell command with a copy button. Grows to fit; the text scrolls sideways sooner than it clips. */
 export function Command({ text }: { text: string }) {
   return (
-    <div className="flex h-10 min-w-0 items-center gap-3 rounded-lg bg-card pr-1 pl-4 font-mono text-[13px]">
+    <div className="flex h-10 w-fit max-w-full items-center gap-3 rounded-lg bg-card pr-1 pl-4 font-mono text-[13px]">
       <span className="text-faint select-none">$</span>
-      <code className="min-w-0 flex-1 truncate">{text}</code>
+      <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{text}</code>
       <CopyButton text={text} />
     </div>
   );

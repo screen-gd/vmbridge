@@ -10,22 +10,22 @@ import { Window } from "./Window";
 
 const tabs = copy.dashboard.tabs;
 
-/** One dashboard screenshot inside a window, filling its slot in the stepper. */
+/** One dashboard screenshot inside a window, shown whole since the area matches the image ratio. */
 function Shot({ src, alt }: { src: string; alt: string }) {
   return (
-    <Window title="localhost:3774/dashboard" className="lg:h-full">
-      <div className="relative aspect-[16/10] lg:aspect-auto lg:h-full">
-        <Image src={src} alt={alt} fill sizes="(min-width: 1024px) 700px, 100vw" className="object-cover object-top" />
+    <Window title="localhost:3774/dashboard" className="h-full">
+      <div className="relative aspect-[16/10]">
+        <Image src={src} alt={alt} fill sizes="(min-width: 1024px) 60vw, 100vw" className="object-contain" />
       </div>
     </Window>
   );
 }
 
 const visuals = [
-  <TerminalWindow key="run" script={stepLogs[0]} className="lg:h-full" />,
+  <TerminalWindow key="run" script={stepLogs[0]} className="h-full" />,
   <Shot key="provider" src="/shots/desktop-setup-provider.png" alt={tabs.setup.caption} />,
   <Shot key="devices" src="/shots/desktop-devices.png" alt={tabs.devices.caption} />,
-  <TerminalWindow key="project" script={stepLogs[3]} className="lg:h-full" />,
+  <TerminalWindow key="project" script={stepLogs[3]} className="h-full" />,
 ];
 
 /** The four setup steps: a clickable list on the left, the matching screen or terminal on the right. */
@@ -66,8 +66,13 @@ export function Steps() {
             );
           })}
         </div>
-        <div className="relative lg:aspect-[16/10]">
-          <div key={selected} className="lg:absolute lg:inset-0" style={{ animation: "rise 200ms both" }}>
+        <div className="relative">
+          <div aria-hidden className="invisible">
+            <Window title="localhost:3774/dashboard">
+              <div className="aspect-[16/10]" />
+            </Window>
+          </div>
+          <div key={selected} className="absolute inset-0" style={{ animation: "rise 200ms both" }}>
             {visuals[selected]}
           </div>
         </div>

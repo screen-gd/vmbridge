@@ -22,7 +22,7 @@ export function Screens() {
   const [active, setActive] = useState<ShotId>("canvas");
   return (
     <Section id="dashboard" title={copy.dashboard.title} body={copy.dashboard.body}>
-      <div className="inline-flex gap-1 rounded-lg bg-card p-1" role="tablist">
+      <div className="inline-flex max-w-full gap-1 overflow-x-auto rounded-lg bg-card p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="tablist">
         {shots.map((shot) => (
           <button
             key={shot.id}
@@ -47,8 +47,8 @@ export function Screens() {
                 src={shot.src}
                 alt={tabs[shot.id].caption}
                 fill
-                sizes="(min-width: 1024px) 1056px, 100vw"
-                className={`object-cover object-top transition-opacity duration-200 ${shot.id === active ? "opacity-100" : "opacity-0"}`}
+                sizes="(min-width: 1440px) 1344px, 100vw"
+                className={`object-contain transition-opacity duration-200 ${shot.id === active ? "opacity-100" : "opacity-0"}`}
                 priority={shot.id === "canvas"}
               />
             ))}
@@ -61,7 +61,7 @@ export function Screens() {
           </div>
         </div>
       </div>
-      <p className="mt-12 text-sm text-muted-foreground lg:mt-14">{tabs[active].caption}</p>
+      <p className="mt-12 text-sm text-muted-foreground lg:mt-14 lg:max-w-[calc(100%-16rem)]">{tabs[active].caption}</p>
     </Section>
   );
 }

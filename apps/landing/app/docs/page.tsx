@@ -5,6 +5,7 @@ import { Command, CopyButton } from "@/components/CopyButton";
 import { DocsNav, type DocsSection } from "@/components/DocsNav";
 import { Topology } from "@/components/Topology";
 import { commands, install, providers } from "@/lib/data";
+import { container } from "@/lib/styles";
 
 export const metadata: Metadata = { title: "Docs" };
 
@@ -96,7 +97,7 @@ export default function Docs() {
   return (
     <>
       <Nav />
-      <div className="mx-auto flex max-w-[1120px] gap-12 px-5 sm:px-8">
+      <div className={`${container} flex gap-12`}>
         <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-52 shrink-0 overflow-y-auto py-10 lg:block">
           <DocsNav sections={sections} />
         </aside>

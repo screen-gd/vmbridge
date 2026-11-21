@@ -34,7 +34,6 @@ const layouts = {
     devices: { mac: [140, 125], phone: [140, 235] },
     bridge: [500, 180],
     vms: { a: [840, 75], b: [840, 180], c: [840, 285] },
-    dot: 4.5,
   },
   narrow: {
     w: 1000,
@@ -42,7 +41,6 @@ const layouts = {
     devices: { mac: [270, 110], phone: [730, 110] },
     bridge: [500, 500],
     vms: { a: [500, 850], b: [500, 1070], c: [500, 1290] },
-    dot: 11,
   },
 } as const;
 type Layout = (typeof layouts)[keyof typeof layouts];
@@ -66,8 +64,11 @@ const wireStyle: Record<WireKind, { stroke: string; strokeOpacity: number; dash?
   waking: { stroke: "var(--primary)", strokeOpacity: 0.6, dash: "3 6" },
 };
 
-/** One wire between two nodes, with two packets moving along it while it carries traffic. */
-function Wire({ d, kind, packets, dot }: { d: string; kind: WireKind; packets: boolean; dot: number }) {
+/**
+ * One wire between two nodes, with two packets moving along it while it carries traffic.
+ * Packets are round-capped stubs so they stay circular when the SVG stretches non-uniformly.
+ */
+function Wire({ d, kind, packets }: { d: string; kind: WireKind; packets: boolean }) {
   const style = wireStyle[kind];
   return (
     <>
@@ -82,12 +83,12 @@ function Wire({ d, kind, packets, dot }: { d: string; kind: WireKind; packets: b
       />
       {kind === "active" && packets ? (
         <>
-          <circle r={dot} fill="var(--primary)">
+          <path d="M0 0h0.01" fill="none" stroke="var(--primary)" strokeWidth={7} strokeLinecap="round" vectorEffect="non-scaling-stroke">
             <animateMotion dur="1.8s" repeatCount="indefinite" path={d} />
-          </circle>
-          <circle r={dot} fill="rgb(255 255 255 / 0.7)">
+          </path>
+          <path d="M0 0h0.01" fill="none" stroke="rgb(255 255 255 / 0.7)" strokeWidth={7} strokeLinecap="round" vectorEffect="non-scaling-stroke">
             <animateMotion dur="2.1s" begin="-1s" repeatCount="indefinite" keyPoints="1;0" keyTimes="0;1" calcMode="linear" path={d} />
-          </circle>
+          </path>
         </>
       ) : null}
     </>
@@ -203,7 +204,7 @@ export function Topology() {
 
   return (
     <div ref={panel} className="overflow-hidden rounded-2xl border bg-card">
-      <div className="relative" style={{ aspectRatio: `${layout.w} / ${layout.h}` }}>
+      <div className={`relative ${narrow ? "" : "h-[22rem]"}`} style={narrow ? { aspectRatio: `${layout.w} / ${layout.h}` } : undefined}>
         {!narrow ? (
           <>
             <span className="absolute top-3 left-[14%] -translate-x-1/2 font-mono text-[11px] text-faint">{copy.diagram.devices}</span>
@@ -211,16 +212,15 @@ export function Topology() {
             <span className="absolute top-3 left-[84%] -translate-x-1/2 font-mono text-[11px] text-faint">{copy.diagram.vms}</span>
           </>
         ) : null}
-        <svg viewBox={`0 0 ${layout.w} ${layout.h}`} className="absolute inset-0 size-full" aria-hidden>
-          <Wire d={wire(layout.devices.mac, layout.bridge, !narrow)} kind="active" packets={packets} dot={layout.dot} />
-          <Wire d={wire(layout.devices.phone, layout.bridge, !narrow)} kind="active" packets={packets} dot={layout.dot} />
+        <svg viewBox={`0 0 ${layout.w} ${layout.h}`} preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
+          <Wire d={wire(layout.devices.mac, layout.bridge, !narrow)} kind="active" packets={packets} />
+          <Wire d={wire(layout.devices.phone, layout.bridge, !narrow)} kind="active" packets={packets} />
           {vms.map((vm) => (
             <Wire
               key={vm.id}
               d={wire(layout.bridge, layout.vms[vm.id], !narrow)}
               kind={vm.state === "online" ? "active" : vm.state}
               packets={packets}
-              dot={layout.dot}
             />
           ))}
         </svg>
@@ -251,9 +251,9 @@ export function Topology() {
             className="grid grid-cols-[1fr_1fr_2fr] gap-x-4"
             style={row.animate ? { animation: "rise 200ms both" } : undefined}
           >
-            <span className="truncate">{row.project}</span>
-            <span className="truncate text-muted-foreground">{row.state}</span>
-            <span className="truncate text-faint">{row.detail}</span>
+            <span className="min-w-0">{row.project}</span>
+            <span className="min-w-0 text-muted-foreground">{row.state}</span>
+            <span className="min-w-0 text-faint">{row.detail}</span>
           </div>
         ))}
       </div>

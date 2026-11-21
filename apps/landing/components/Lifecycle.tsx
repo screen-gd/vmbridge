@@ -58,7 +58,7 @@ export function Lifecycle() {
   const reduced = useReducedMotion();
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
-  const push = (item: Item) => setItems((list) => [...list, item].slice(-6));
+  const push = (item: Item) => setItems((list) => [...list, item].slice(-5));
 
   const streamReply = (reply: string) => {
     setStreaming(true);
@@ -116,11 +116,11 @@ export function Lifecycle() {
     <Section id="lifecycle" title={copy.lifecycle.title} body={copy.lifecycle.body}>
       <div className="grid gap-8 lg:grid-cols-[minmax(0,8fr)_minmax(0,5fr)] lg:items-start">
         <Window title="T3 Code">
-          <div className="flex h-[26rem] flex-col">
+          <div className="flex h-[30rem] flex-col">
             <div className="flex h-11 shrink-0 items-center gap-2 border-b px-4 text-sm">
-              <span className="font-medium">Hello-World</span>
+              <span className="min-w-0 truncate font-medium">Hello-World</span>
               <span className="flex-1" />
-              <span className="flex h-6 items-center gap-1.5 rounded-md bg-muted px-2 font-mono text-[11px] text-muted-foreground">
+              <span className="flex h-6 shrink-0 items-center gap-1.5 rounded-md bg-muted px-2 font-mono text-[11px] whitespace-nowrap text-muted-foreground">
                 <span className={chipDot[phase]} />
                 vm-df9bca
                 <span>{chipLabel(phase)}</span>
@@ -129,7 +129,7 @@ export function Lifecycle() {
             {phase === "idle" ? (
               <div className="h-px shrink-0 origin-left bg-primary" style={{ animation: "drain 8000ms linear forwards" }} />
             ) : null}
-            <div className="flex flex-1 flex-col justify-end gap-3 overflow-hidden p-4">
+            <div className="flex flex-1 flex-col justify-end gap-3 overflow-hidden p-4 [mask-image:linear-gradient(to_bottom,transparent,black_3.5rem)]">
               {items.map((item) =>
                 item.kind === "user" ? (
                   <div key={item.id} className="ml-auto max-w-[80%] rounded-2xl rounded-br-md bg-muted px-3.5 py-2 text-sm" style={item.animate ? rise : undefined}>

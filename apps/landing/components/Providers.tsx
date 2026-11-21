@@ -7,7 +7,7 @@ import { Section } from "./Section";
 export function Providers() {
   return (
     <Section id="providers" title={copy.providers.title} body={copy.providers.body}>
-      <div className="max-w-4xl overflow-x-auto">
+      <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] text-left text-sm">
           <thead>
             <tr>
