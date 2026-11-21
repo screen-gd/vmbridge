@@ -1,5 +1,18 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
 import { copy } from "@/lib/copy";
+import { useReducedMotion } from "@/lib/hooks";
 import { Section } from "./Section";
+import { stateDot } from "./Topology";
+import { Window } from "./Window";
+
+type Phase = "asleep" | "waking" | "online" | "idle";
+
+type Item =
+  | { id: number; kind: "user"; text: string; animate: boolean }
+  | { id: number; kind: "agent"; text: string; animate: boolean }
+  | { id: number; kind: "notice"; text: string; dot: string; animate: boolean };
 
 const markers = [
   "size-2.5 rounded-full bg-primary",
@@ -8,30 +21,165 @@ const markers = [
   "size-2.5 animate-pulse rounded-full bg-primary",
 ];
 
-const lines = [
-  "h-px flex-1 bg-white/20",
-  "h-0 flex-1 border-t border-dashed border-white/20",
-  "h-0 flex-1 border-t border-dashed border-white/20",
-  "h-px flex-1 bg-primary/60",
+const phaseIndex: Record<Phase, number> = { online: 0, idle: 1, asleep: 2, waking: 3 };
+
+const chipDot: Record<Phase, string> = {
+  online: stateDot.online,
+  waking: stateDot.waking,
+  asleep: stateDot.asleep,
+  idle: "size-1.5 rounded-full ring-1 ring-primary",
+};
+
+const chipLabel = (phase: Phase) => (phase === "idle" ? copy.lifecycle.states[1].name : copy.diagram[phase]);
+
+const exchanges = copy.demo.exchanges;
+
+const initialItems: Item[] = [
+  { id: 0, kind: "user", text: exchanges[0].message, animate: false },
+  { id: 1, kind: "agent", text: exchanges[0].reply, animate: false },
+  { id: 2, kind: "notice", text: copy.demo.asleep, dot: stateDot.asleep, animate: false },
 ];
 
-/** The four VM states as a left-to-right track: marker, line, name, body. */
+const rise = { animation: "rise 200ms both" };
+
+/**
+ * A small T3 Code thread that demonstrates the VM lifecycle: Send wakes a sleeping VM, the agent
+ * streams a reply, and after a few idle seconds the VM sleeps again. Beside it, the state list
+ * follows the phase the thread is in.
+ */
 export function Lifecycle() {
+  const [phase, setPhase] = useState<Phase>("asleep");
+  const [index, setIndex] = useState(1);
+  const [streaming, setStreaming] = useState(false);
+  const [items, setItems] = useState<Item[]>(initialItems);
+  const nextId = useRef(initialItems.length);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reduced = useReducedMotion();
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+
+  const push = (item: Item) => setItems((list) => [...list, item].slice(-6));
+
+  const streamReply = (reply: string) => {
+    setStreaming(true);
+    const finish = () => {
+      setStreaming(false);
+      setPhase("idle");
+      idleTimer.current = setTimeout(() => {
+        setPhase("asleep");
+        push({ id: nextId.current++, kind: "notice", text: copy.demo.asleep, dot: stateDot.asleep, animate: true });
+      }, 8000);
+      timers.current.push(idleTimer.current);
+    };
+    if (reduced) {
+      push({ id: nextId.current++, kind: "agent", text: reply, animate: true });
+      finish();
+      return;
+    }
+    const id = nextId.current++;
+    const words = reply.split(" ");
+    push({ id, kind: "agent", text: "", animate: true });
+    words.forEach((_, w) => {
+      timers.current.push(
+        setTimeout(() => {
+          setItems((list) => list.map((item) => (item.id === id ? { ...item, text: words.slice(0, w + 1).join(" ") } : item)));
+        }, (w + 1) * 45),
+      );
+    });
+    timers.current.push(setTimeout(finish, words.length * 45 + 120));
+  };
+
+  const send = () => {
+    if (phase === "waking" || streaming) return;
+    const exchange = exchanges[index % exchanges.length];
+    setIndex((index + 1) % exchanges.length);
+    push({ id: nextId.current++, kind: "user", text: exchange.message, animate: true });
+    const wasAsleep = phase === "asleep";
+    if (wasAsleep) {
+      setPhase("waking");
+      push({ id: nextId.current++, kind: "notice", text: `${copy.demo.waking} vm-df9bca`, dot: stateDot.waking, animate: true });
+      timers.current.push(setTimeout(() => setPhase("online"), 1600));
+    } else {
+      setPhase("online");
+      if (idleTimer.current) {
+        clearTimeout(idleTimer.current);
+        idleTimer.current = null;
+      }
+    }
+    timers.current.push(setTimeout(() => streamReply(exchange.reply), wasAsleep ? 1800 : 300));
+  };
+
+  const message = exchanges[index % exchanges.length].message;
+  const current = phaseIndex[phase];
+
   return (
     <Section id="lifecycle" title={copy.lifecycle.title} body={copy.lifecycle.body}>
-      <ol className="grid gap-8 sm:grid-cols-4 sm:gap-6">
-        {copy.lifecycle.states.map((state, i) => (
-          <li key={state.name}>
-            <div className="flex items-center gap-3">
-              <span className={markers[i]} />
-              <span className={`hidden sm:block ${lines[i]}`} />
-              <span className="text-sm font-medium sm:hidden">{state.name}</span>
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,8fr)_minmax(0,5fr)] lg:items-start">
+        <Window title="T3 Code">
+          <div className="flex h-[26rem] flex-col">
+            <div className="flex h-11 shrink-0 items-center gap-2 border-b px-4 text-sm">
+              <span className="font-medium">Hello-World</span>
+              <span className="flex-1" />
+              <span className="flex h-6 items-center gap-1.5 rounded-md bg-muted px-2 font-mono text-[11px] text-muted-foreground">
+                <span className={chipDot[phase]} />
+                vm-df9bca
+                <span>{chipLabel(phase)}</span>
+              </span>
             </div>
-            <div className="mt-4 hidden text-sm font-medium sm:block">{state.name}</div>
-            <p className="mt-2 text-pretty text-sm text-muted-foreground">{state.body}</p>
-          </li>
-        ))}
-      </ol>
+            {phase === "idle" ? (
+              <div className="h-px shrink-0 origin-left bg-primary" style={{ animation: "drain 8000ms linear forwards" }} />
+            ) : null}
+            <div className="flex flex-1 flex-col justify-end gap-3 overflow-hidden p-4">
+              {items.map((item) =>
+                item.kind === "user" ? (
+                  <div key={item.id} className="ml-auto max-w-[80%] rounded-2xl rounded-br-md bg-muted px-3.5 py-2 text-sm" style={item.animate ? rise : undefined}>
+                    {item.text}
+                  </div>
+                ) : item.kind === "agent" ? (
+                  <div key={item.id} className="max-w-[85%] text-pretty text-sm text-muted-foreground" style={item.animate ? rise : undefined}>
+                    {item.text}
+                  </div>
+                ) : (
+                  <div key={item.id} className="flex items-center justify-center gap-2 font-mono text-[11px] text-faint" style={item.animate ? rise : undefined}>
+                    <span className={item.dot} />
+                    {item.text}
+                  </div>
+                ),
+              )}
+            </div>
+            <div className="m-3 mt-0 flex h-11 items-center gap-2 rounded-xl bg-muted pr-1.5 pl-3.5">
+              <span aria-hidden className="flex-1 truncate text-sm text-muted-foreground">
+                {message}
+              </span>
+              <button
+                type="button"
+                onClick={send}
+                disabled={phase === "waking" || streaming}
+                aria-label={`${copy.demo.send}: ${message}`}
+                className="h-8 rounded-lg bg-white px-3 text-sm font-medium text-black active:scale-[0.97] disabled:opacity-40"
+              >
+                {copy.demo.send}
+              </button>
+            </div>
+          </div>
+        </Window>
+
+        <div className="grid gap-1">
+          {copy.lifecycle.states.map((state, i) => (
+            <div
+              key={state.name}
+              aria-current={i === current || undefined}
+              className={`flex gap-3 rounded-xl px-4 py-3.5 transition-opacity duration-200 ${i === current ? "bg-card" : "opacity-60"}`}
+            >
+              <span className={`mt-1.5 shrink-0 ${markers[i]}`} />
+              <div>
+                <div className="text-sm font-medium">{state.name}</div>
+                <p className="mt-1 text-pretty text-sm text-muted-foreground">{state.body}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </Section>
   );
 }

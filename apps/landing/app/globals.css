@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Dark only, near black with white text and one warm orange tint. */
+/* Dark only, near black with white text and one violet tint. */
 :root {
   --background: #070708;
   --foreground: #ffffff;
@@ -9,7 +9,7 @@
   --muted-foreground: rgb(255 255 255 / 0.62);
   --faint: rgb(255 255 255 / 0.38);
   --border: rgb(255 255 255 / 0.08);
-  --primary: oklch(0.74 0.17 52);
+  --primary: #8b5cf6;
 }
 
 @theme inline {
@@ -102,5 +102,22 @@
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+/* Terminal block cursor. Used as `blink 1s steps(1) infinite`. */
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* The idle bar draining toward sleep. Used as `drain 8s linear forwards`. */
+@keyframes drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
   }
 }

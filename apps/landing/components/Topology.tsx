@@ -118,7 +118,8 @@ function Device({ name }: { name: string }) {
 
 const stateLabel = (state: VmState) => copy.diagram[state];
 
-const stateDot: Record<VmState, string> = {
+/** State dot styles, shared with the lifecycle thread's VM chip and notices. */
+export const stateDot: Record<VmState, string> = {
   online: "size-1.5 rounded-full bg-primary",
   asleep: "size-1.5 rounded-full ring-1 ring-white/40",
   waking: "size-1.5 animate-pulse rounded-full bg-primary",

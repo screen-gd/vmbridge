@@ -1,29 +1,77 @@
+"use client";
+
+import Image from "next/image";
+import { useState } from "react";
 import { copy } from "@/lib/copy";
 import { stepLogs } from "@/lib/data";
 import { Section } from "./Section";
+import { TerminalWindow } from "./TerminalWindow";
+import { Window } from "./Window";
 
-/** The four setup steps, each beside the matching terminal output. */
+const tabs = copy.dashboard.tabs;
+
+/** One dashboard screenshot inside a window, filling its slot in the stepper. */
+function Shot({ src, alt }: { src: string; alt: string }) {
+  return (
+    <Window title="localhost:3774/dashboard" className="lg:h-full">
+      <div className="relative aspect-[16/10] lg:aspect-auto lg:h-full">
+        <Image src={src} alt={alt} fill sizes="(min-width: 1024px) 700px, 100vw" className="object-cover object-top" />
+      </div>
+    </Window>
+  );
+}
+
+const visuals = [
+  <TerminalWindow key="run" script={stepLogs[0]} className="lg:h-full" />,
+  <Shot key="provider" src="/shots/desktop-setup-provider.png" alt={tabs.setup.caption} />,
+  <Shot key="devices" src="/shots/desktop-devices.png" alt={tabs.devices.caption} />,
+  <TerminalWindow key="project" script={stepLogs[3]} className="lg:h-full" />,
+];
+
+/** The four setup steps: a clickable list on the left, the matching screen or terminal on the right. */
 export function Steps() {
+  const [selected, setSelected] = useState(0);
   return (
     <Section id="how" title={copy.steps.title} body={copy.steps.body}>
-      <ol>
-        {copy.steps.items.map((step, i) => (
-          <li key={step.title} className="grid gap-6 border-t py-8 first:border-t-0 first:pt-0 md:grid-cols-[2.5rem_1fr_1fr]">
-            <span className="font-mono text-sm text-faint">{String(i + 1).padStart(2, "0")}</span>
-            <div>
-              <h3 className="font-medium">{step.title}</h3>
-              <p className="mt-2 text-pretty text-sm text-muted-foreground">{step.body}</p>
-            </div>
-            <div className="overflow-x-auto rounded-lg bg-card p-4 font-mono text-[12.5px] leading-6 whitespace-pre">
-              {(stepLogs.at(i) ?? []).map((line, j) => (
-                <div key={j} className={line.startsWith("$") ? "text-foreground" : "text-muted-foreground"}>
-                  {line}
-                </div>
-              ))}
-            </div>
-          </li>
-        ))}
-      </ol>
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,8fr)] lg:items-start">
+        <div className="grid gap-1">
+          {copy.steps.items.map((step, i) => {
+            const current = i === selected;
+            return (
+              <button
+                key={step.title}
+                type="button"
+                aria-current={current ? "step" : undefined}
+                onClick={() => setSelected(i)}
+                className={`w-full rounded-xl px-4 py-4 text-left transition-colors duration-150 active:scale-[0.99] ${
+                  current ? "bg-card" : "hover:bg-white/[0.03]"
+                }`}
+              >
+                <span className="flex gap-4">
+                  <span className={`font-mono text-sm ${current ? "text-primary" : "text-faint"}`}>{String(i + 1).padStart(2, "0")}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium">{step.title}</span>
+                    <span
+                      className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
+                        current ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+                      }`}
+                    >
+                      <span className="overflow-hidden">
+                        <span className="mt-2 block text-pretty text-sm text-muted-foreground">{step.body}</span>
+                      </span>
+                    </span>
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="relative lg:aspect-[16/10]">
+          <div key={selected} className="lg:absolute lg:inset-0" style={{ animation: "rise 200ms both" }}>
+            {visuals[selected]}
+          </div>
+        </div>
+      </div>
     </Section>
   );
 }

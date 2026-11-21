@@ -77,6 +77,34 @@ export const copy = {
     ],
   },
 
+  /**
+   * A small copy of a T3 Code thread beside the lifecycle states. The visitor presses Send, the sleeping VM wakes,
+   * the agent replies, and after a few idle seconds the VM sleeps again. Exchanges are used in order, then repeat.
+   */
+  demo: {
+    /** 8 */
+    send: "Send",
+    /** 40. Shown in the thread while the VM wakes. The VM name follows it. */
+    waking: "Waking",
+    /** 50. Shown in the thread once the VM is asleep again. */
+    asleep: "The VM is asleep. Showing the saved copy.",
+    /** Each message 50, each reply 130. An ordinary coding request and the agent's plain report of what it did. */
+    exchanges: [
+      {
+        message: "Add rate limiting to the login route",
+        reply: "Limited POST /login to 10 requests a minute per IP in src/routes/login.ts. Added 3 tests, and the auth suite passes.",
+      },
+      {
+        message: "Split the invoice parser out of billing.ts",
+        reply: "Moved parseInvoice and its helpers to src/invoice-parser.ts and updated 6 imports. Typecheck and all 24 billing tests pass.",
+      },
+      {
+        message: "Why is the orders query slow?",
+        reply: "getOrderSummary in src/db/orders.ts filters by created_at, which has no index, so it scans the whole orders table.",
+      },
+    ],
+  },
+
   /** A short request log showing which calls the bridge answers itself and which go to a VM. */
   routing: {
     /** 40 */

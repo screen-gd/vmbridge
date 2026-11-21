@@ -110,10 +110,56 @@ export type Agent = (typeof agents)[number];
 
 /** Real terminal output beside each step, index-matched to copy.steps.items. */
 export const stepLogs: string[][] = [
-  ["$ vmbridge", "VM Bridge 0.2.0 is running.", "  This machine   http://127.0.0.1:3774/dashboard"],
+  ["$ vmbridge", "VM Bridge 0.2.0 is running.", "  This machine         http://127.0.0.1:3774/dashboard"],
   ["Provider boxd connected", "Size: 2 vCPU, 8 GB", "Sleep after 5 idle minutes"],
   ['Pairing link "MacBook" created', "MacBook paired", "iPhone paired"],
   ["Creating a VM for Hello-World", "Installing T3, Codex and Claude", "vm-df9bca ready on boxd", "Cloned Hello-World"],
+];
+
+/**
+ * The startup output of `vmbridge run`, as printed by apps/cli/src/index.ts: each address line is
+ * `  ${label.padEnd(20)} ${url}/dashboard` with the labels from apps/server/src/network.ts.
+ */
+export const heroScript: string[] = [
+  "$ vmbridge",
+  "VM Bridge 0.2.0 is running.",
+  "",
+  "  This machine         http://127.0.0.1:3774/dashboard",
+  "  Local network (en0)  http://192.168.1.20:3774/dashboard",
+  "  Tailscale IP         http://100.101.102.103:3774/dashboard",
+];
+
+/**
+ * What each command in `commands` really prints, index-matched. Every output line is copied from
+ * apps/cli/src/index.ts and apps/cli/src/service.ts, on macOS with home /Users/you.
+ */
+export const cliScripts: string[][] = [
+  [
+    "$ vmbridge",
+    "VM Bridge 0.2.0 is running.",
+    "",
+    "  This machine         http://127.0.0.1:3774/dashboard",
+    "  Local network (en0)  http://192.168.1.20:3774/dashboard",
+    "  Tailscale IP         http://100.101.102.103:3774/dashboard",
+    "  Tailscale name       http://your-mac.your-tailnet.ts.net:3774/dashboard",
+    "",
+    "  Turn on Tailscale HTTPS in the dashboard settings for an https:// address.",
+    "",
+    "Open the dashboard to set up providers and pair devices. Press Ctrl+C to stop.",
+  ],
+  [
+    "$ vmbridge stop",
+    "VM Bridge stopped.",
+    "The background service starts again at next login, or now with `vmbridge service install`.",
+  ],
+  ["$ vmbridge service install", "VM Bridge now runs in the background on port 3774. Logs: /Users/you/.vmbridge/vmbridge.log"],
+  ["$ vmbridge service uninstall", "Background service removed."],
+  [
+    "$ vmbridge key",
+    "Choose a dashboard key (at least 8 characters): ********",
+    "Type it again: ********",
+    "Dashboard key saved.",
+  ],
 ];
 
 export interface Route {
