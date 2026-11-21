@@ -7,6 +7,8 @@ import { frame } from "@/lib/styles";
 import { Logo } from "./brand";
 
 const linkClass = "font-mono text-[13px] text-muted-foreground transition-colors duration-150 hover:text-foreground";
+/** A 1px underline that grows in from the left on hover, for the text nav links. */
+const underline = "relative after:absolute after:-bottom-0.5 after:left-0 after:h-px after:w-full after:origin-left after:scale-x-0 after:bg-foreground after:transition-transform after:duration-200 hover:after:scale-x-100";
 
 /** The site header: a solid bar, brand on the left, mono links and GitHub on the right. */
 export function Nav() {
@@ -18,13 +20,13 @@ export function Nav() {
           VM Bridge
         </Link>
         <nav className="ml-auto flex items-center gap-5">
-          <Link href="/#how" className={`hidden sm:block ${linkClass}`}>
+          <Link href="/#how" className={`hidden sm:block ${linkClass} ${underline}`}>
             {copy.nav.how}
           </Link>
-          <Link href="/#providers" className={`hidden sm:block ${linkClass}`}>
+          <Link href="/#providers" className={`hidden sm:block ${linkClass} ${underline}`}>
             {copy.nav.providers}
           </Link>
-          <Link href="/docs" className={linkClass}>
+          <Link href="/docs" className={`${linkClass} ${underline}`}>
             {copy.nav.docs}
           </Link>
           <a href={github} aria-label={copy.nav.github} className={linkClass}>

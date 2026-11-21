@@ -1,3 +1,4 @@
+import { Backdrop } from "@/components/Backdrop";
 import { Footer, Nav } from "@/components/Chrome";
 import { Cli } from "@/components/Cli";
 import { Hero } from "@/components/Hero";
@@ -13,6 +14,7 @@ import { Steps } from "@/components/Steps";
 export default function Home() {
   return (
     <SiteStateProvider>
+      <Backdrop />
       <Nav />
       <LandingMain>
         <Hero />

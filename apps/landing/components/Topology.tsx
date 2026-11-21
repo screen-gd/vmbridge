@@ -136,7 +136,7 @@ function VmNode({ vm, provider, narrow, onToggle }: { vm: Vm; provider: Provider
       type="button"
       onClick={onToggle}
       aria-label={`${vm.project}: ${stateLabel(vm.state)}`}
-      className={`${narrow ? "w-60" : "w-52"} rounded-md bg-muted p-3 text-left`}
+      className={`${narrow ? "w-60" : "w-52"} rounded-md bg-muted p-3 text-left transition-colors duration-150 hover:bg-white/10`}
     >
       <div className="flex items-center gap-2.5">
         <ProviderLogo provider={provider} className={`size-7 rounded-md ring-white/10 transition-opacity duration-200 ${asleep ? "opacity-50" : ""}`} />
@@ -170,8 +170,7 @@ const seedRows: LogRow[] = [
 /**
  * The wiring diagram row: devices to VM Bridge to the project VMs, with the event log beside it.
  * `stacked` renders the single-column variant used inside the docs page's bordered box.
- * `log={false}` drops the events panel so the diagram takes the whole row, with the click hint
- * as a small mono line under it.
+ * `log={false}` drops the events panel so the diagram takes the whole row.
  */
 export function Topology({ stacked = false, log = true }: { stacked?: boolean; log?: boolean }) {
   const [vms, setVms] = useState(initialVms);
@@ -214,7 +213,7 @@ export function Topology({ stacked = false, log = true }: { stacked?: boolean; l
   return (
     <div ref={panel} id="topology" className={`grid grid-cols-[minmax(0,1fr)] ${stacked || !log ? "" : "lg:grid-cols-[minmax(0,1fr)_26rem]"}`}>
       <div>
-        <div className={`relative ${narrow ? "" : "h-[26rem]"}`} style={narrow ? { aspectRatio: `${layout.w} / ${layout.h}` } : undefined}>
+        <div className={`relative ${narrow ? "" : "h-[30rem]"}`} style={narrow ? { aspectRatio: `${layout.w} / ${layout.h}` } : undefined}>
         {!narrow ? (
           <>
             <span className="absolute top-3 left-[14%] -translate-x-1/2 font-mono text-[13px] text-faint">{copy.diagram.devices}</span>
@@ -253,7 +252,6 @@ export function Topology({ stacked = false, log = true }: { stacked?: boolean; l
           </At>
         ))}
         </div>
-        {log ? null : <div className="mt-4 font-mono text-[13px] text-muted-foreground">{copy.hero.hint}</div>}
       </div>
 
       {log ? (

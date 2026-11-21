@@ -4,21 +4,32 @@ import { Copy01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
 
-/** A small icon button that copies text and ticks once it has. */
+/** A small icon button that copies text; the copy and tick icons cross-fade on swap. */
 export function CopyButton({ text, className = "" }: { text: string; className?: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
       type="button"
       aria-label={copied ? "Copied" : "Copy"}
-      className={`grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-white/5 hover:text-foreground ${className}`}
+      className={`grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-[color,background-color,transform] duration-150 hover:bg-white/5 hover:text-foreground active:scale-[0.97] ${className}`}
       onClick={async () => {
         await navigator.clipboard.writeText(text);
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
       }}
     >
-      <HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} size={16} className={copied ? "text-primary" : ""} />
+      <span className="relative col-start-1 row-start-1 grid place-items-center">
+        <HugeiconsIcon
+          icon={Copy01Icon}
+          size={16}
+          className={`transition-[opacity,transform] duration-150 ${copied ? "scale-90 opacity-0" : "scale-100 opacity-100"}`}
+        />
+        <HugeiconsIcon
+          icon={Tick02Icon}
+          size={16}
+          className={`absolute text-primary transition-[opacity,transform] duration-150 ${copied ? "scale-100 opacity-100" : "scale-90 opacity-0"}`}
+        />
+      </span>
     </button>
   );
 }

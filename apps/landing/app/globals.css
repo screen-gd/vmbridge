@@ -124,3 +124,10 @@
     transform: scaleX(0);
   }
 }
+
+/* One white flash on a race lane's time as it finishes, settling back to its class colour. */
+@keyframes finish-flash {
+  from {
+    color: rgb(255 255 255);
+  }
+}

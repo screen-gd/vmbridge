@@ -90,10 +90,26 @@ export function Providers() {
   useEffect(() => () => cancelAnimationFrame(raf.current), []);
 
   return (
-    <Section id="providers" title={copy.providers.title} body={copy.providers.body}>
+    <Section
+      id="providers"
+      title={copy.providers.title}
+      body={copy.providers.body}
+      aside={
+        <span className="flex items-center gap-3 font-mono text-[13px] text-faint">
+          {speed > 1 ? <span>{copy.providers.race.speed}</span> : null}
+          <button
+            type="button"
+            onClick={start}
+            className="inline-flex h-8 items-center rounded-md bg-muted px-3 font-mono text-[13px] text-foreground transition-[color,background-color,transform] duration-150 hover:bg-white/10 active:scale-[0.97]"
+          >
+            {raced ? copy.providers.race.again : copy.providers.race.start}
+          </button>
+        </span>
+      }
+    >
       <div className="grid grid-cols-[minmax(0,1fr)] gap-10 lg:grid-cols-12 lg:items-center lg:gap-16">
         <div className="lg:col-span-5">
-          <div ref={orbit} className="relative mx-auto aspect-square w-full max-w-[30rem]">
+          <div ref={orbit} className="relative mx-auto aspect-square w-full max-w-[34rem]">
             <svg viewBox="0 0 100 100" className="absolute inset-0 size-full" aria-hidden>
               <circle
                 cx={50}
@@ -141,7 +157,7 @@ export function Providers() {
                 style={{ left: `${spot.x}%`, top: `${spot.y}%` }}
               >
                 <div className="flex flex-col items-center gap-2 p-2">
-                  <span className="bg-background">
+                  <span className="bg-background transition-transform duration-150 hover:scale-[1.06]">
                     <ProviderLogo provider={spot.provider} className="size-12 rounded-md ring-white/10 sm:size-14" />
                   </span>
                   <span className="text-[13px] font-medium">{spot.provider.name}</span>
@@ -151,23 +167,11 @@ export function Providers() {
           </div>
         </div>
         <div className="lg:col-span-7">
-          <div className="flex h-8 items-center justify-between font-mono text-[13px] text-faint">
-            <span>{copy.providers.race.label}</span>
-            <span className="flex items-center gap-3">
-              {speed > 1 ? <span>{copy.providers.race.speed}</span> : null}
-              <button
-                type="button"
-                onClick={start}
-                className="inline-flex h-7 items-center rounded-md bg-muted px-2.5 font-mono text-[13px] text-foreground transition-colors duration-150 hover:bg-white/10"
-              >
-                {raced ? copy.providers.race.again : copy.providers.race.start}
-              </button>
-            </span>
-          </div>
           {providers.map((p, i) => {
             const seconds = lanes[i];
             const t = seconds === null ? 0 : Math.min(elapsed[i], seconds);
             const fill = seconds === null ? 0 : Math.min(1, t / seconds);
+            const finished = raced && seconds !== null && elapsed[i] >= seconds;
             return (
               <div key={p.id} className="flex items-center gap-4 py-3.5">
                 <ProviderLogo provider={p} className="size-7 shrink-0 rounded-md ring-white/10" />
@@ -179,9 +183,10 @@ export function Providers() {
                   <span className="absolute inset-y-0 left-0 bg-primary" style={{ width: `${fill * 100}%` }} />
                 </span>
                 <span
-                  className={`w-28 shrink-0 text-right font-mono text-[13px] tabular-nums ${
-                    raced && seconds !== null && elapsed[i] >= seconds && i === winner ? "text-foreground" : "text-muted-foreground"
+                  className={`w-28 shrink-0 text-right font-mono text-[13px] tabular-nums transition-colors duration-300 ${
+                    finished && i === winner ? "text-foreground" : "text-muted-foreground"
                   }`}
+                  style={finished ? { animation: "finish-flash 300ms ease-out" } : undefined}
                 >
                   {seconds === null ? <span className="text-faint">{copy.providers.unmeasured}</span> : raced ? `${t.toFixed(1)} s` : staticTimes[i]}
                 </span>

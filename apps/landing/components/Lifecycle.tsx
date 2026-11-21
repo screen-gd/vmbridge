@@ -116,20 +116,21 @@ export function Lifecycle() {
   const current = phaseIndex[phase];
 
   return (
-    <Section id="lifecycle" title={copy.lifecycle.title} body={copy.lifecycle.body}>
+    <Section
+      id="lifecycle"
+      title={copy.lifecycle.title}
+      body={copy.lifecycle.body}
+      aside={
+        <span className="flex h-8 items-center gap-1.5 rounded-md bg-muted px-2.5 font-mono text-[13px] whitespace-nowrap text-muted-foreground">
+          <span className={`transition-all duration-200 ${chipDot[phase]}`} />
+          vm-df9bca
+          <span className="transition-colors duration-200">{chipLabel(phase)}</span>
+        </span>
+      }
+    >
       <div className="grid grid-cols-[minmax(0,1fr)] gap-10 lg:grid-cols-12 lg:items-center lg:gap-16">
         <div className="flex lg:col-span-7">
-          <Panel
-            className="flex w-full flex-col"
-            label="t3 code / Hello-World"
-            aside={
-              <span className="flex h-6 shrink-0 items-center gap-1.5 rounded-md bg-muted px-2 font-mono text-[13px] whitespace-nowrap text-muted-foreground">
-                <span className={chipDot[phase]} />
-                vm-df9bca
-                <span>{chipLabel(phase)}</span>
-              </span>
-            }
-          >
+          <Panel className="flex w-full flex-col" label="t3 code / Hello-World">
             {phase === "idle" ? (
               <div className="h-px origin-left bg-primary" style={{ animation: "drain 8000ms linear forwards" }} />
             ) : null}
@@ -161,7 +162,7 @@ export function Lifecycle() {
                   onClick={send}
                   disabled={phase === "waking" || streaming}
                   aria-label={`${copy.demo.send}: ${message}`}
-                  className="inline-flex h-8 items-center rounded-md bg-white px-3 font-mono text-[13px] text-black transition-colors duration-150 hover:bg-white/85 active:bg-white/70 disabled:opacity-40"
+                  className="inline-flex h-8 items-center rounded-md bg-white px-3 font-mono text-[13px] text-black transition-[color,background-color,transform] duration-150 hover:bg-white/85 active:bg-white/70 active:scale-[0.97] disabled:opacity-40"
                 >
                   {copy.demo.send}
                 </button>
@@ -176,9 +177,9 @@ export function Lifecycle() {
               <div
                 key={state.name}
                 aria-current={i === current || undefined}
-                className={`flex items-center gap-3 text-lg font-medium ${i === current ? "" : "text-muted-foreground"}`}
+                className={`flex items-center gap-3 text-lg font-medium transition-colors duration-200 ${i === current ? "" : "text-muted-foreground"}`}
               >
-                <span className={`shrink-0 ${markers[i]}`} />
+                <span className={`shrink-0 transition-all duration-200 ${markers[i]}`} />
                 {state.name}
               </div>
             ))}

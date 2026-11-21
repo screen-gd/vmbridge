@@ -129,7 +129,7 @@ export function HeroTerminal() {
     <div
       ref={scroll}
       onClick={() => inputRef.current?.focus()}
-      className="cursor-text overflow-y-auto px-5 py-6 font-mono text-[11px] leading-5 break-words whitespace-pre-wrap sm:py-8 sm:text-[12px] sm:leading-6"
+      className="cursor-text overflow-y-auto px-5 py-6 font-mono text-[11px] leading-5 break-words whitespace-pre-wrap sm:py-8 sm:text-[12px] sm:leading-6 min-[1440px]:text-[13px]"
       style={{ height: "30rem" }}
     >
       {heroScript.slice(0, visible).map((text, i) =>
