@@ -117,19 +117,6 @@ export const stepLogs: string[][] = [
 ];
 
 /**
- * The startup output of `vmbridge run`, as printed by apps/cli/src/index.ts: each address line is
- * `  ${label.padEnd(20)} ${url}/dashboard` with the labels from apps/server/src/network.ts.
- */
-export const heroScript: string[] = [
-  "$ vmbridge",
-  "VM Bridge 0.2.0 is running.",
-  "",
-  "  This machine         http://127.0.0.1:3774/dashboard",
-  "  Local network (en0)  http://192.168.1.20:3774/dashboard",
-  "  Tailscale IP         http://100.101.102.103:3774/dashboard",
-];
-
-/**
  * What each command in `commands` really prints, index-matched. Every output line is copied from
  * apps/cli/src/index.ts and apps/cli/src/service.ts, on macOS with home /Users/you.
  */
@@ -161,6 +148,17 @@ export const cliScripts: string[][] = [
     "Dashboard key saved.",
   ],
 ];
+
+/** The hero terminal plays the full `vmbridge` startup output. */
+export const heroScript = cliScripts[0];
+
+/** Bridge-side calls answer in about a millisecond. */
+export const bridgeLatency = "1 ms";
+
+const measuredMs = providers.flatMap((p) => (p.measured ? [p.measured.browseMs] : []));
+
+/** Round trip bounds across the measured providers: "156 to 229 ms". */
+export const vmLatency = `${Math.min(...measuredMs)} to ${Math.max(...measuredMs)} ms`;
 
 export interface Route {
   /** Real RPC names from apps/server/src/gateway/rpc.ts. */

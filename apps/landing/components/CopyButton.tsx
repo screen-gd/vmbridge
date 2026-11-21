@@ -11,7 +11,7 @@ export function CopyButton({ text, className = "" }: { text: string; className?:
     <button
       type="button"
       aria-label={copied ? "Copied" : "Copy"}
-      className={`grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-white/5 hover:text-foreground active:scale-[0.97] ${className}`}
+      className={`grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-white/5 hover:text-foreground ${className}`}
       onClick={async () => {
         await navigator.clipboard.writeText(text);
         setCopied(true);
@@ -26,7 +26,7 @@ export function CopyButton({ text, className = "" }: { text: string; className?:
 /** A one-line shell command with a copy button. Grows to fit; the text scrolls sideways sooner than it clips. */
 export function Command({ text }: { text: string }) {
   return (
-    <div className="flex h-10 w-fit max-w-full items-center gap-3 rounded-lg bg-card pr-1 pl-4 font-mono text-[13px]">
+    <div className="flex h-10 w-fit max-w-full items-center gap-3 rounded-md bg-card pr-1 pl-4 font-mono text-[12.5px]">
       <span className="text-faint select-none">$</span>
       <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{text}</code>
       <CopyButton text={text} />

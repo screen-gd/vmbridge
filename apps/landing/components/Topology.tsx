@@ -5,6 +5,7 @@ import { copy } from "@/lib/copy";
 import { providers, type Provider, type ProviderId } from "@/lib/data";
 import { useInView, useMedia, useReducedMotion } from "@/lib/hooks";
 import { Logo, ProviderLogo, T3Logo } from "./brand";
+import { Panel } from "./Window";
 
 type VmState = "online" | "asleep" | "waking";
 
@@ -110,7 +111,7 @@ function At({ point, layout, children }: { point: Point; layout: Layout; childre
 /** A paired device, a pill with the T3 Code mark. */
 function Device({ name }: { name: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-xl bg-muted px-2.5 py-2">
+    <div className="flex items-center gap-2 rounded-md bg-muted px-2.5 py-2">
       <T3Logo className="size-6" />
       <span className="text-xs font-medium">{name}</span>
     </div>
@@ -127,22 +128,22 @@ export const stateDot: Record<VmState, string> = {
 };
 
 /** One project VM. Clicking sleeps an online VM and wakes an asleep one. */
-function VmNode({ vm, provider, onToggle }: { vm: Vm; provider: Provider; onToggle: () => void }) {
+function VmNode({ vm, provider, narrow, onToggle }: { vm: Vm; provider: Provider; narrow: boolean; onToggle: () => void }) {
   const dim = `transition-opacity duration-200 ${vm.state === "asleep" ? "opacity-50" : ""}`;
   return (
     <button
       type="button"
       onClick={onToggle}
       aria-label={`${vm.project}: ${stateLabel(vm.state)}`}
-      className="w-44 rounded-xl bg-muted p-3 text-left transition-transform duration-100 ease-out active:scale-[0.97] sm:w-52"
+      className={`${narrow ? "w-60" : "w-52"} rounded-md bg-muted p-3 text-left`}
     >
       <div className="flex items-center gap-2.5">
-        <ProviderLogo provider={provider} className={`size-7 ${dim}`} />
+        <ProviderLogo provider={provider} className={`size-7 rounded-md ring-white/10 ${dim}`} />
         <div className={`min-w-0 flex-1 leading-tight ${dim}`}>
           <div className="truncate text-sm font-medium">{vm.project}</div>
           <div className="truncate font-mono text-[11px] text-faint">{provider.name}</div>
         </div>
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <div className="flex items-center gap-1.5 text-[11px] whitespace-nowrap text-muted-foreground">
           <span className={stateDot[vm.state]} />
           {stateLabel(vm.state)}
         </div>
@@ -165,8 +166,11 @@ const seedRows: LogRow[] = [
   { id: 2, project: "docs", state: "online", detail: "Daytona", animate: false },
 ];
 
-/** The wiring diagram used in the hero and on the docs page: devices, VM Bridge and the project VMs. */
-export function Topology() {
+/**
+ * The wiring diagram row: devices to VM Bridge to the project VMs, with the event log beside it.
+ * `stacked` renders the single-column variant used inside the docs page's bordered box.
+ */
+export function Topology({ stacked = false }: { stacked?: boolean }) {
   const [vms, setVms] = useState(initialVms);
   const [rows, setRows] = useState(seedRows);
   const nextRow = useRef(seedRows.length);
@@ -178,9 +182,10 @@ export function Topology() {
   const packets = useInView(panel) && !reduced;
   const narrow = useMedia("(max-width: 767px)");
   const layout = narrow ? layouts.narrow : layouts.wide;
+  const shown = stacked ? rows.slice(-3) : rows.slice(-8);
 
   const pushRow = (project: string, state: string, detail: string) =>
-    setRows((list) => [...list, { id: nextRow.current++, project, state, detail, animate: true }].slice(-3));
+    setRows((list) => [...list, { id: nextRow.current++, project, state, detail, animate: true }].slice(-8));
 
   const toggle = (id: Vm["id"]) => {
     const vm = vms.find((v) => v.id === id);
@@ -203,8 +208,8 @@ export function Topology() {
   };
 
   return (
-    <div ref={panel} className="overflow-hidden rounded-2xl border bg-card">
-      <div className={`relative ${narrow ? "" : "h-[22rem]"}`} style={narrow ? { aspectRatio: `${layout.w} / ${layout.h}` } : undefined}>
+    <div ref={panel} id="topology" className={`grid grid-cols-[minmax(0,1fr)] ${stacked ? "" : "lg:grid-cols-[minmax(0,1fr)_26rem]"}`}>
+      <div className={`relative ${narrow ? "" : "h-[20rem]"}`} style={narrow ? { aspectRatio: `${layout.w} / ${layout.h}` } : undefined}>
         {!narrow ? (
           <>
             <span className="absolute top-3 left-[14%] -translate-x-1/2 font-mono text-[11px] text-faint">{copy.diagram.devices}</span>
@@ -239,23 +244,27 @@ export function Topology() {
         </At>
         {vms.map((vm) => (
           <At key={vm.id} point={layout.vms[vm.id]} layout={layout}>
-            <VmNode vm={vm} provider={providerOf(vm.providerId)} onToggle={() => toggle(vm.id)} />
+            <VmNode vm={vm} provider={providerOf(vm.providerId)} narrow={narrow} onToggle={() => toggle(vm.id)} />
           </At>
         ))}
       </div>
 
-      <div aria-live="polite" className="border-t bg-black/30 px-4 py-3 font-mono text-[12px] leading-6">
-        {rows.map((row) => (
-          <div
-            key={row.id}
-            className="grid grid-cols-[1fr_1fr_2fr] gap-x-4"
-            style={row.animate ? { animation: "rise 200ms both" } : undefined}
-          >
-            <span className="min-w-0">{row.project}</span>
-            <span className="min-w-0 text-muted-foreground">{row.state}</span>
-            <span className="min-w-0 text-faint">{row.detail}</span>
+      <div className={stacked ? "border-t" : "border-t lg:border-t-0 lg:border-l"}>
+        <Panel label="events" aside={copy.hero.hint}>
+          <div aria-live="polite" className="p-4 font-mono text-[12px] leading-6">
+            {shown.map((row) => (
+              <div
+                key={row.id}
+                className="grid grid-cols-[auto_auto_minmax(0,1fr)] gap-x-4"
+                style={row.animate ? { animation: "rise 200ms both" } : undefined}
+              >
+                <span className="whitespace-nowrap">{row.project}</span>
+                <span className="whitespace-nowrap text-muted-foreground">{row.state}</span>
+                <span className="min-w-0 text-faint">{row.detail}</span>
+              </div>
+            ))}
           </div>
-        ))}
+        </Panel>
       </div>
     </div>
   );

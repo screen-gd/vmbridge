@@ -5,7 +5,7 @@ import { copy } from "@/lib/copy";
 import { useReducedMotion } from "@/lib/hooks";
 import { Section } from "./Section";
 import { stateDot } from "./Topology";
-import { Window } from "./Window";
+import { Panel } from "./Window";
 
 type Phase = "asleep" | "waking" | "online" | "idle";
 
@@ -37,19 +37,21 @@ const exchanges = copy.demo.exchanges;
 const initialItems: Item[] = [
   { id: 0, kind: "user", text: exchanges[0].message, animate: false },
   { id: 1, kind: "agent", text: exchanges[0].reply, animate: false },
-  { id: 2, kind: "notice", text: copy.demo.asleep, dot: stateDot.asleep, animate: false },
+  { id: 2, kind: "user", text: exchanges[1].message, animate: false },
+  { id: 3, kind: "agent", text: exchanges[1].reply, animate: false },
+  { id: 4, kind: "notice", text: copy.demo.asleep, dot: stateDot.asleep, animate: false },
 ];
 
 const rise = { animation: "rise 200ms both" };
 
 /**
  * A small T3 Code thread that demonstrates the VM lifecycle: Send wakes a sleeping VM, the agent
- * streams a reply, and after a few idle seconds the VM sleeps again. Beside it, the state list
- * follows the phase the thread is in.
+ * streams a reply, and after a few idle seconds the VM sleeps again. Beside it, the four state
+ * cells follow the phase the thread is in.
  */
 export function Lifecycle() {
   const [phase, setPhase] = useState<Phase>("asleep");
-  const [index, setIndex] = useState(1);
+  const [index, setIndex] = useState(2);
   const [streaming, setStreaming] = useState(false);
   const [items, setItems] = useState<Item[]>(initialItems);
   const nextId = useRef(initialItems.length);
@@ -58,7 +60,7 @@ export function Lifecycle() {
   const reduced = useReducedMotion();
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
-  const push = (item: Item) => setItems((list) => [...list, item].slice(-5));
+  const push = (item: Item) => setItems((list) => [...list, item].slice(-6));
 
   const streamReply = (reply: string) => {
     setStreaming(true);
@@ -114,62 +116,66 @@ export function Lifecycle() {
 
   return (
     <Section id="lifecycle" title={copy.lifecycle.title} body={copy.lifecycle.body}>
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,8fr)_minmax(0,5fr)] lg:items-start">
-        <Window title="T3 Code">
-          <div className="flex h-[30rem] flex-col">
-            <div className="flex h-11 shrink-0 items-center gap-2 border-b px-4 text-sm">
-              <span className="min-w-0 truncate font-medium">Hello-World</span>
-              <span className="flex-1" />
+      <div className="grid grid-cols-[minmax(0,1fr)] lg:grid-cols-12">
+        <div className="lg:col-span-7">
+          <Panel
+            label="t3 code / Hello-World"
+            aside={
               <span className="flex h-6 shrink-0 items-center gap-1.5 rounded-md bg-muted px-2 font-mono text-[11px] whitespace-nowrap text-muted-foreground">
                 <span className={chipDot[phase]} />
                 vm-df9bca
                 <span>{chipLabel(phase)}</span>
               </span>
-            </div>
+            }
+          >
             {phase === "idle" ? (
-              <div className="h-px shrink-0 origin-left bg-primary" style={{ animation: "drain 8000ms linear forwards" }} />
+              <div className="h-px origin-left bg-primary" style={{ animation: "drain 8000ms linear forwards" }} />
             ) : null}
-            <div className="flex flex-1 flex-col justify-end gap-3 overflow-hidden p-4 [mask-image:linear-gradient(to_bottom,transparent,black_3.5rem)]">
-              {items.map((item) =>
-                item.kind === "user" ? (
-                  <div key={item.id} className="ml-auto max-w-[80%] rounded-2xl rounded-br-md bg-muted px-3.5 py-2 text-sm" style={item.animate ? rise : undefined}>
-                    {item.text}
-                  </div>
-                ) : item.kind === "agent" ? (
-                  <div key={item.id} className="max-w-[85%] text-pretty text-sm text-muted-foreground" style={item.animate ? rise : undefined}>
-                    {item.text}
-                  </div>
-                ) : (
-                  <div key={item.id} className="flex items-center justify-center gap-2 font-mono text-[11px] text-faint" style={item.animate ? rise : undefined}>
-                    <span className={item.dot} />
-                    {item.text}
-                  </div>
-                ),
-              )}
+            <div className="flex h-[22rem] flex-col">
+              <div className="flex flex-1 flex-col justify-end gap-3 overflow-hidden p-4 [mask-image:linear-gradient(to_bottom,transparent,black_3.5rem)]">
+                {items.map((item) =>
+                  item.kind === "user" ? (
+                    <div key={item.id} className="ml-auto max-w-[80%] rounded-md bg-muted px-3.5 py-2 text-sm" style={item.animate ? rise : undefined}>
+                      {item.text}
+                    </div>
+                  ) : item.kind === "agent" ? (
+                    <div key={item.id} className="max-w-[85%] text-pretty text-sm text-muted-foreground" style={item.animate ? rise : undefined}>
+                      {item.text}
+                    </div>
+                  ) : (
+                    <div key={item.id} className="flex items-center justify-center gap-2 font-mono text-[11px] text-faint" style={item.animate ? rise : undefined}>
+                      <span className={item.dot} />
+                      {item.text}
+                    </div>
+                  ),
+                )}
+              </div>
+              <div className="m-3 mt-0 flex h-11 items-center gap-2 rounded-md bg-muted pr-1.5 pl-3.5">
+                <span aria-hidden className="flex-1 truncate text-sm text-muted-foreground">
+                  {message}
+                </span>
+                <button
+                  type="button"
+                  onClick={send}
+                  disabled={phase === "waking" || streaming}
+                  aria-label={`${copy.demo.send}: ${message}`}
+                  className="inline-flex h-8 items-center rounded-md bg-white px-3 font-mono text-[13px] text-black transition-colors duration-150 hover:bg-white/85 active:bg-white/70 disabled:opacity-40"
+                >
+                  {copy.demo.send}
+                </button>
+              </div>
             </div>
-            <div className="m-3 mt-0 flex h-11 items-center gap-2 rounded-xl bg-muted pr-1.5 pl-3.5">
-              <span aria-hidden className="flex-1 truncate text-sm text-muted-foreground">
-                {message}
-              </span>
-              <button
-                type="button"
-                onClick={send}
-                disabled={phase === "waking" || streaming}
-                aria-label={`${copy.demo.send}: ${message}`}
-                className="h-8 rounded-lg bg-white px-3 text-sm font-medium text-black active:scale-[0.97] disabled:opacity-40"
-              >
-                {copy.demo.send}
-              </button>
-            </div>
-          </div>
-        </Window>
+          </Panel>
+        </div>
 
-        <div className="grid gap-1">
+        <div className="flex flex-col border-t lg:col-span-5 lg:border-t-0 lg:border-l">
           {copy.lifecycle.states.map((state, i) => (
             <div
               key={state.name}
               aria-current={i === current || undefined}
-              className={`flex gap-3 rounded-xl px-4 py-3.5 transition-opacity duration-200 ${i === current ? "bg-card" : "opacity-60"}`}
+              className={`flex flex-1 gap-3 border-b px-5 py-4 transition-opacity duration-200 last:border-b-0 sm:px-7 ${
+                i === current ? "bg-card" : "opacity-60"
+              }`}
             >
               <span className={`mt-1.5 shrink-0 ${markers[i]}`} />
               <div>

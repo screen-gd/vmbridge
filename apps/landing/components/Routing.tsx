@@ -1,47 +1,56 @@
 import { copy } from "@/lib/copy";
-import { routes } from "@/lib/data";
+import { bridgeLatency, routes, vmLatency } from "@/lib/data";
+import { cell } from "@/lib/styles";
 import { Section } from "./Section";
-import { Topology } from "./Topology";
-import { Window } from "./Window";
+import { Panel } from "./Window";
 
-/** The wiring diagram, then which calls the bridge answers itself and which it forwards to a VM. */
+/** Which calls the bridge answers itself and which it forwards to a VM, with the measured gap beside it. */
 export function Routing() {
   return (
     <Section id="routing" title={copy.routing.title} body={copy.routing.body}>
-      <Topology />
-      <p className="mt-4 font-mono text-xs text-faint">{copy.hero.hint}</p>
-      <div className="mt-10 grid gap-8 lg:grid-cols-[minmax(0,8fr)_minmax(0,5fr)] lg:items-center">
-        <Window title="vmbridge.log">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px] font-mono text-[13px]">
+      <div className="grid grid-cols-[minmax(0,1fr)] lg:grid-cols-12">
+        <div className="lg:col-span-7">
+          <Panel label="vmbridge.log">
+            <table className="hidden w-full font-mono text-[12.5px] sm:table">
               <thead>
                 <tr>
-                  <th className="px-4 py-3 text-left font-normal text-faint">{copy.routing.columns.call}</th>
-                  <th className="px-4 py-3 text-left font-normal text-faint">{copy.routing.columns.target}</th>
-                  <th className="px-4 py-3 text-right font-normal text-faint">{copy.routing.columns.time}</th>
+                  <th className="px-4 py-2.5 text-left font-normal text-faint">{copy.routing.columns.call}</th>
+                  <th className="px-4 py-2.5 text-left font-normal text-faint">{copy.routing.columns.target}</th>
+                  <th className="px-4 py-2.5 text-right font-normal text-faint">{copy.routing.columns.time}</th>
                 </tr>
               </thead>
               <tbody>
                 {routes.map((route) => (
                   <tr key={route.call} className="border-t">
-                    <td className="px-4 py-3">{route.call}</td>
-                    <td className={`px-4 py-3 ${route.kind === "vm" ? "text-primary" : "text-foreground"}`}>{route.target}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{route.time}</td>
+                    <td className="px-4 py-2.5">{route.call}</td>
+                    <td className={`px-4 py-2.5 ${route.kind === "vm" ? "text-primary" : "text-foreground"}`}>{route.target}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">{route.time}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <div className="sm:hidden">
+              {routes.map((route) => (
+                <div key={route.call} className="border-t px-4 py-3 font-mono text-[12.5px] first:border-t-0">
+                  <div className="break-all">{route.call}</div>
+                  <div className="mt-1 flex justify-between">
+                    <span className={route.kind === "vm" ? "text-primary" : "text-foreground"}>{route.target}</span>
+                    <span className="tabular-nums text-muted-foreground">{route.time}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        </div>
+        <div className="flex flex-col border-t lg:col-span-5 lg:border-t-0 lg:border-l">
+          <div className={`${cell} flex-1 border-b`}>
+            <div className="font-mono text-[2rem] leading-none tracking-tight">{bridgeLatency}</div>
+            <p className="mt-3 text-sm text-muted-foreground">{copy.routing.notes.bridge}</p>
           </div>
-        </Window>
-        <div className="grid gap-2 text-sm text-muted-foreground">
-          <p className="flex items-center gap-2.5">
-            <span className="size-2 rounded-[2px] bg-white" />
-            {copy.routing.notes.bridge}
-          </p>
-          <p className="flex items-center gap-2.5">
-            <span className="size-2 rounded-[2px] bg-primary" />
-            {copy.routing.notes.vm}
-          </p>
+          <div className={`${cell} flex-1`}>
+            <div className="font-mono text-[2rem] leading-none tracking-tight text-primary">{vmLatency}</div>
+            <p className="mt-3 text-sm text-muted-foreground">{copy.routing.notes.vm}</p>
+          </div>
         </div>
       </div>
     </Section>

@@ -5,7 +5,7 @@ import { Command, CopyButton } from "@/components/CopyButton";
 import { DocsNav, type DocsSection } from "@/components/DocsNav";
 import { Topology } from "@/components/Topology";
 import { commands, install, providers } from "@/lib/data";
-import { container } from "@/lib/styles";
+import { frame } from "@/lib/styles";
 
 export const metadata: Metadata = { title: "Docs" };
 
@@ -44,7 +44,7 @@ function Code({ children }: { children: string }) {
 
 function Block({ children }: { children: string }) {
   return (
-    <div className="relative rounded-lg bg-card">
+    <div className="relative rounded-md bg-card">
       <pre className="overflow-x-auto p-4 pr-12 font-mono text-[13px] leading-6 text-foreground">{children}</pre>
       <CopyButton text={children} className="absolute top-2 right-2" />
     </div>
@@ -66,7 +66,7 @@ function List({ items }: { items: React.ReactNode[] }) {
 
 function Table({ head, rows }: { head: React.ReactNode[]; rows: React.ReactNode[][] }) {
   return (
-    <div className="overflow-x-auto rounded-lg border">
+    <div className="overflow-x-auto rounded-md border">
       <table className="w-full min-w-[560px] text-left text-sm">
         <thead className="bg-card text-foreground">
           <tr>
@@ -97,7 +97,7 @@ export default function Docs() {
   return (
     <>
       <Nav />
-      <div className={`${container} flex gap-12`}>
+      <div className={`${frame} flex gap-12 px-5 sm:px-7`}>
         <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-52 shrink-0 overflow-y-auto py-10 lg:block">
           <DocsNav sections={sections} />
         </aside>
@@ -105,7 +105,7 @@ export default function Docs() {
         <main className="min-w-0 flex-1 py-10 lg:max-w-3xl">
           <h1 className="title">How VM Bridge works</h1>
 
-          <details className="mt-6 rounded-lg border bg-card lg:hidden">
+          <details className="mt-6 rounded-md border bg-card lg:hidden">
             <summary className="cursor-pointer px-4 py-3 text-sm font-medium">On this page</summary>
             <div className="border-t px-2 py-2">
               <DocsNav sections={sections} />
@@ -208,8 +208,8 @@ bun run build          # dist/vmbridge
                 T3 Code keeps one connection to VM Bridge. VM Bridge keeps one connection to the T3 server on each awake VM, and routes each request
                 by its project or thread.
               </p>
-              <div className="not-prose my-6">
-                <Topology />
+              <div className="not-prose my-6 border">
+                <Topology stacked />
               </div>
               <List
                 items={[
@@ -256,8 +256,8 @@ bun run build          # dist/vmbridge
             <Section id="providers" title="Providers">
               <div className="grid gap-2 sm:grid-cols-2">
                 {providers.map((p) => (
-                  <div key={p.id} className="flex items-start gap-3 rounded-lg border bg-card p-3">
-                    <ProviderLogo provider={p} className="size-9" />
+                  <div key={p.id} className="flex items-start gap-3 rounded-md border bg-card p-3">
+                    <ProviderLogo provider={p} className="size-9 rounded-md ring-white/10" />
                     <div className="min-w-0 text-sm">
                       <div className="font-medium text-foreground">{p.name}</div>
                       <div>{p.sizes.join(" · ")}</div>

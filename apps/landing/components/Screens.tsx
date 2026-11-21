@@ -3,8 +3,9 @@
 import Image from "next/image";
 import { useState } from "react";
 import { copy } from "@/lib/copy";
+import { cell } from "@/lib/styles";
 import { Section } from "./Section";
-import { Phone, Window } from "./Window";
+import { Panel } from "./Window";
 
 const shots = [
   { id: "canvas", src: "/shots/desktop-canvas.png" },
@@ -17,51 +18,72 @@ type ShotId = (typeof shots)[number]["id"];
 
 const tabs = copy.dashboard.tabs;
 
-/** Dashboard screenshots behind four tabs, in a browser window with a phone overlapping it. */
+/** Dashboard screenshots behind a column of tabs; on phones the tabs fold into a row above the shot. */
 export function Screens() {
   const [active, setActive] = useState<ShotId>("canvas");
   return (
     <Section id="dashboard" title={copy.dashboard.title} body={copy.dashboard.body}>
-      <div className="inline-flex max-w-full gap-1 overflow-x-auto rounded-lg bg-card p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="tablist">
-        {shots.map((shot) => (
-          <button
-            key={shot.id}
-            type="button"
-            role="tab"
-            aria-selected={shot.id === active}
-            onClick={() => setActive(shot.id)}
-            className={`h-8 rounded-md px-3 text-sm transition-colors duration-150 active:scale-[0.97] ${
-              shot.id === active ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {tabs[shot.id].label}
-          </button>
-        ))}
-      </div>
-      <div className="relative mt-6">
-        <Window title="localhost:3774/dashboard">
-          <div className="relative aspect-[16/10]">
-            {shots.map((shot) => (
-              <Image
+      <div className="grid grid-cols-[minmax(0,1fr)] lg:grid-cols-12">
+        <div role="tablist" className="hidden lg:col-span-4 lg:flex lg:flex-col">
+          {shots.map((shot) => {
+            const current = shot.id === active;
+            return (
+              <button
                 key={shot.id}
-                src={shot.src}
-                alt={tabs[shot.id].caption}
-                fill
-                sizes="(min-width: 1440px) 1344px, 100vw"
-                className={`object-contain transition-opacity duration-200 ${shot.id === active ? "opacity-100" : "opacity-0"}`}
-                priority={shot.id === "canvas"}
-              />
-            ))}
+                type="button"
+                role="tab"
+                aria-selected={current}
+                onClick={() => setActive(shot.id)}
+                className={`flex-1 border-b px-5 py-4 text-left transition-colors duration-150 last:border-b-0 sm:px-7 ${
+                  current ? "bg-card" : ""
+                }`}
+              >
+                <span className="block font-mono text-[13px]">
+                  {current ? <span className="text-primary">{"> "}</span> : null}
+                  <span className={current ? "text-foreground" : "text-muted-foreground"}>{tabs[shot.id].label}</span>
+                </span>
+                <span className="mt-1 block text-sm text-muted-foreground">{tabs[shot.id].caption}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="border-t lg:col-span-8 lg:border-t-0 lg:border-l">
+          <div role="tablist" className="flex overflow-x-auto border-b [scrollbar-width:none] lg:hidden [&::-webkit-scrollbar]:hidden">
+            {shots.map((shot) => {
+              const current = shot.id === active;
+              return (
+                <button
+                  key={shot.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={current}
+                  onClick={() => setActive(shot.id)}
+                  className="shrink-0 px-4 py-3 font-mono text-[13px] whitespace-nowrap"
+                >
+                  {current ? <span className="text-primary">{"> "}</span> : null}
+                  <span className={current ? "text-foreground" : "text-muted-foreground"}>{tabs[shot.id].label}</span>
+                </button>
+              );
+            })}
           </div>
-        </Window>
-        <div className="absolute -bottom-8 right-10 hidden w-[160px] lg:block">
-          <Phone src="/shots/phone-canvas.png" alt="" />
-          <div className={`absolute inset-0 transition-opacity duration-200 ${active === "logs" ? "opacity-100" : "opacity-0"}`}>
-            <Phone src="/shots/phone-logs.png" alt="" />
-          </div>
+          <Panel label="localhost:3774/dashboard">
+            <div className="relative aspect-[16/10]">
+              {shots.map((shot) => (
+                <Image
+                  key={shot.id}
+                  src={shot.src}
+                  alt={tabs[shot.id].caption}
+                  fill
+                  sizes="(min-width: 1560px) 1020px, (min-width: 1024px) 67vw, 100vw"
+                  className={`object-contain transition-opacity duration-200 ${shot.id === active ? "opacity-100" : "opacity-0"}`}
+                  priority={shot.id === "canvas"}
+                />
+              ))}
+            </div>
+          </Panel>
+          <div className={`${cell} border-t text-sm text-muted-foreground lg:hidden`}>{tabs[active].caption}</div>
         </div>
       </div>
-      <p className="mt-12 text-sm text-muted-foreground lg:mt-14 lg:max-w-[calc(100%-16rem)]">{tabs[active].caption}</p>
     </Section>
   );
 }

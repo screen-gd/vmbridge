@@ -15,10 +15,11 @@ export function Logo({ className = "size-7" }: { className?: string }) {
   );
 }
 
-export function ProviderLogo({ provider, className = "size-8" }: { provider: Provider; className?: string }) {
+/** A provider's mark on its brand tile. Callers own the radius and ring colour via className. */
+export function ProviderLogo({ provider, className = "size-8 rounded-lg ring-white/10" }: { provider: Provider; className?: string }) {
   return (
     <span
-      className={`grid shrink-0 place-items-center overflow-hidden rounded-lg ring-1 ring-white/10 ${className}`}
+      className={`grid shrink-0 place-items-center overflow-hidden ring-1 ${className}`}
       style={{ background: provider.tile }}
     >
       {/* eslint-disable-next-line @next/next/no-img-element -- tiny static marks */}

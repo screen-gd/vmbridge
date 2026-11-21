@@ -7,12 +7,13 @@ import { Providers } from "@/components/Providers";
 import { Routing } from "@/components/Routing";
 import { Screens } from "@/components/Screens";
 import { Steps } from "@/components/Steps";
+import { frame } from "@/lib/styles";
 
 export default function Home() {
   return (
     <>
       <Nav />
-      <main>
+      <main className={frame}>
         <Hero />
         <Steps />
         <Lifecycle />

@@ -3,16 +3,16 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import Link from "next/link";
 import { copy } from "@/lib/copy";
 import { github } from "@/lib/data";
-import { container } from "@/lib/styles";
+import { frame } from "@/lib/styles";
 import { Logo } from "./brand";
 
-const linkClass = "text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground";
+const linkClass = "font-mono text-[13px] text-muted-foreground transition-colors duration-150 hover:text-foreground";
 
-/** The site header: brand on the left, section links and GitHub on the right. */
+/** The site header: a solid bar, brand on the left, mono links and GitHub on the right. */
 export function Nav() {
   return (
-    <header className="sticky top-0 z-40 h-14 bg-background/70 backdrop-blur-xl backdrop-saturate-150">
-      <div className={`${container} flex h-full items-center gap-6`}>
+    <header className="sticky top-0 z-40 border-b bg-background">
+      <div className={`${frame} flex h-14 items-center gap-6 px-5 sm:px-7`}>
         <Link href="/" className="flex items-center gap-2.5 font-medium">
           <Logo className="size-6" />
           VM Bridge
@@ -40,7 +40,7 @@ export function Nav() {
 export function Footer() {
   return (
     <footer className="border-t">
-      <div className={`${container} flex flex-wrap items-center gap-4 py-10`}>
+      <div className={`${frame} flex h-16 items-center gap-4 px-5 sm:px-7`}>
         <Logo className="size-5" />
         <span className="text-sm text-muted-foreground">{copy.footer.line}</span>
         <div className="ml-auto flex gap-5">
