@@ -99,11 +99,6 @@
   text-wrap: balance;
 }
 
-/* Diagonal hairline fill used as a spacer strip between sections. */
-@utility hatch {
-  background-image: repeating-linear-gradient(-45deg, rgb(255 255 255 / 0.09) 0 1px, transparent 1px 7px);
-}
-
 @keyframes rise {
   from {
     opacity: 0;
