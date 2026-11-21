@@ -101,7 +101,7 @@ export function SiteStateProvider({ children }: { children: React.ReactNode }) {
   return <SiteStateContext.Provider value={{ phase, countdown, sleep, wake }}>{children}</SiteStateContext.Provider>;
 }
 
-/** <main> wrapper that dims the page's content while the site is asleep. The frame stays opaque; the dim applies to an inner wrapper. */
+/** <main> wrapper that dims the page's content while the site is asleep; the dim applies to an inner wrapper. */
 export function LandingMain({ children }: { children: React.ReactNode }) {
   const { phase } = useSiteState();
   return (

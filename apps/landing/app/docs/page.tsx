@@ -97,7 +97,7 @@ export default function Docs() {
   return (
     <>
       <Nav />
-      <div className={`${frame} flex gap-12 px-6 sm:px-8`}>
+      <div className={`${frame} flex gap-12`}>
         <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-52 shrink-0 overflow-y-auto py-10 lg:block">
           <DocsNav sections={sections} />
         </aside>

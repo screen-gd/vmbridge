@@ -4,11 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { copy } from "@/lib/copy";
 import { providers } from "@/lib/data";
 import { useInView, useReducedMotion } from "@/lib/hooks";
-import { cell } from "@/lib/styles";
 import { Logo, ProviderLogo } from "./brand";
 import { Section } from "./Section";
 import { useSiteState } from "./SiteState";
-import { Panel } from "./Window";
 
 const RACE_EVENT = "vmbridge:race";
 
@@ -93,8 +91,8 @@ export function Providers() {
 
   return (
     <Section id="providers" title={copy.providers.title} body={copy.providers.body}>
-      <div className="grid grid-cols-[minmax(0,1fr)] lg:grid-cols-12">
-        <div className={`${cell} lg:col-span-5`}>
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-10 lg:grid-cols-12 lg:items-center lg:gap-16">
+        <div className="lg:col-span-5">
           <div ref={orbit} className="relative mx-auto aspect-square w-full max-w-[30rem]">
             <svg viewBox="0 0 100 100" className="absolute inset-0 size-full" aria-hidden>
               <circle
@@ -152,48 +150,45 @@ export function Providers() {
             ))}
           </div>
         </div>
-        <div className="border-t lg:col-span-7 lg:border-t-0 lg:border-l">
-          <Panel
-            label={copy.providers.race.label}
-            aside={
-              <span className="flex items-center gap-3">
-                {speed > 1 ? <span>{copy.providers.race.speed}</span> : null}
-                <button
-                  type="button"
-                  onClick={start}
-                  className="inline-flex h-7 items-center rounded-md bg-muted px-2.5 font-mono text-[13px] text-foreground transition-colors duration-150 hover:bg-white/10"
-                >
-                  {raced ? copy.providers.race.again : copy.providers.race.start}
-                </button>
-              </span>
-            }
-          >
-            {providers.map((p, i) => {
-              const seconds = lanes[i];
-              const t = seconds === null ? 0 : Math.min(elapsed[i], seconds);
-              const fill = seconds === null ? 0 : Math.min(1, t / seconds);
-              return (
-                <div key={p.id} className="flex items-center gap-4 border-t px-6 py-4 first:border-t-0 sm:px-8">
-                  <ProviderLogo provider={p} className="size-7 shrink-0 rounded-md ring-white/10" />
-                  <div className="w-32 shrink-0 sm:w-44">
-                    <div className="text-[15px] font-medium">{p.name}</div>
-                    <div className="text-[13px] leading-snug text-muted-foreground">{p.sleep}</div>
-                  </div>
-                  <span className="relative h-px min-w-0 flex-1 bg-white/10">
-                    <span className="absolute inset-y-0 left-0 bg-primary" style={{ width: `${fill * 100}%` }} />
-                  </span>
-                  <span
-                    className={`w-28 shrink-0 text-right font-mono text-[13px] tabular-nums ${
-                      raced && seconds !== null && elapsed[i] >= seconds && i === winner ? "text-foreground" : "text-muted-foreground"
-                    }`}
-                  >
-                    {seconds === null ? <span className="text-faint">{copy.providers.unmeasured}</span> : raced ? `${t.toFixed(1)} s` : staticTimes[i]}
-                  </span>
+        <div className="lg:col-span-7">
+          <div className="flex h-8 items-center justify-between font-mono text-[13px] text-faint">
+            <span>{copy.providers.race.label}</span>
+            <span className="flex items-center gap-3">
+              {speed > 1 ? <span>{copy.providers.race.speed}</span> : null}
+              <button
+                type="button"
+                onClick={start}
+                className="inline-flex h-7 items-center rounded-md bg-muted px-2.5 font-mono text-[13px] text-foreground transition-colors duration-150 hover:bg-white/10"
+              >
+                {raced ? copy.providers.race.again : copy.providers.race.start}
+              </button>
+            </span>
+          </div>
+          {providers.map((p, i) => {
+            const seconds = lanes[i];
+            const t = seconds === null ? 0 : Math.min(elapsed[i], seconds);
+            const fill = seconds === null ? 0 : Math.min(1, t / seconds);
+            return (
+              <div key={p.id} className="flex items-center gap-4 py-3.5">
+                <ProviderLogo provider={p} className="size-7 shrink-0 rounded-md ring-white/10" />
+                <div className="w-32 shrink-0 sm:w-44">
+                  <div className="text-[15px] font-medium">{p.name}</div>
+                  <div className="text-[13px] leading-snug text-muted-foreground">{p.sleep}</div>
                 </div>
-              );
-            })}
-          </Panel>
-          <div className="border-t px-6 py-5 text-[13px] text-muted-foreground sm:px-8">{copy.providers.note}</div>
+                <span className="relative h-px min-w-0 flex-1 bg-white/10">
+                  <span className="absolute inset-y-0 left-0 bg-primary" style={{ width: `${fill * 100}%` }} />
+                </span>
+                <span
+                  className={`w-28 shrink-0 text-right font-mono text-[13px] tabular-nums ${
+                    raced && seconds !== null && elapsed[i] >= seconds && i === winner ? "text-foreground" : "text-muted-foreground"
+                  }`}
+                >
+                  {seconds === null ? <span className="text-faint">{copy.providers.unmeasured}</span> : raced ? `${t.toFixed(1)} s` : staticTimes[i]}
+                </span>
+              </div>
+            );
+          })}
+          <div className="mt-6 text-[13px] text-muted-foreground">{copy.providers.note}</div>
         </div>
       </div>
     </Section>

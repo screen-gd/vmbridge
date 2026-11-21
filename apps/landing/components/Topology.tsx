@@ -253,7 +253,7 @@ export function Topology({ stacked = false, log = true }: { stacked?: boolean; l
           </At>
         ))}
         </div>
-        {log ? null : <div className="px-6 pb-6 font-mono text-[13px] text-muted-foreground sm:px-8">{copy.hero.hint}</div>}
+        {log ? null : <div className="mt-4 font-mono text-[13px] text-muted-foreground">{copy.hero.hint}</div>}
       </div>
 
       {log ? (

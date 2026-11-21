@@ -1,6 +1,6 @@
 import Image from "next/image";
 
-/** A flush panel: a labelled strip on top, content below. The surrounding grid supplies its borders. */
+/** A surface panel: a labelled strip on top, content below. Callers pad their own content. */
 export function Panel({
   label,
   aside,
@@ -13,8 +13,8 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <div className={className}>
-      <div className="flex h-11 items-center justify-between gap-3 border-b px-6 font-mono text-[13px] text-faint sm:px-8">
+    <div className={`overflow-hidden rounded-xl bg-card ${className}`}>
+      <div className="flex h-11 items-center justify-between gap-3 px-5 font-mono text-[13px] text-faint">
         <span className="min-w-0 truncate">{label}</span>
         {aside}
       </div>

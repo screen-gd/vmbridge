@@ -72,7 +72,7 @@ export function TerminalBody({ script, rows, className = "" }: { script: string[
   return (
     <div
       ref={ref}
-      className={`p-6 font-mono text-[13px] leading-7 break-words whitespace-pre-wrap sm:p-8 ${className}`}
+      className={`p-5 font-mono text-[13px] leading-7 break-words whitespace-pre-wrap sm:p-6 ${className}`}
       style={{ minHeight: `${Math.max(11, lineCount * 1.75 + 5)}rem` }}
     >
       {script.slice(0, visible).map((text, i) =>

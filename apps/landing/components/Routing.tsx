@@ -1,6 +1,5 @@
 import { copy } from "@/lib/copy";
 import { bridgeLatency, routes, vmLatency } from "@/lib/data";
-import { cell } from "@/lib/styles";
 import { Section } from "./Section";
 import { Topology } from "./Topology";
 
@@ -11,11 +10,9 @@ const callsOf = (kind: "bridge" | "vm") => routes.filter((route) => route.kind =
 export function Routing() {
   return (
     <Section id="routing" title={copy.routing.title} body={copy.routing.body}>
-      <div className="border-b">
-        <Topology log={false} />
-      </div>
-      <div className="grid grid-cols-[minmax(0,1fr)] lg:grid-cols-2">
-        <div className={cell}>
+      <Topology log={false} />
+      <div className="mt-12 grid grid-cols-[minmax(0,1fr)] gap-10 lg:grid-cols-2 lg:gap-16">
+        <div>
           <div className="font-mono text-[2.75rem] leading-none tracking-tight">{bridgeLatency}</div>
           <p className="mt-5 text-base leading-relaxed text-muted-foreground">{copy.routing.notes.bridge}</p>
           <div className="mt-5 font-mono text-[13px] leading-7 text-muted-foreground">
@@ -24,7 +21,7 @@ export function Routing() {
             ))}
           </div>
         </div>
-        <div className={`${cell} border-t lg:border-t-0 lg:border-l`}>
+        <div>
           <div className="font-mono text-[2.75rem] leading-none tracking-tight text-primary">{vmLatency}</div>
           <p className="mt-5 text-base leading-relaxed text-muted-foreground">{copy.routing.notes.vm}</p>
           <div className="mt-5 font-mono text-[13px] leading-7 text-muted-foreground">

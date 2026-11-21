@@ -8,11 +8,11 @@ import { Command } from "./CopyButton";
 import { HeroTerminal } from "./HeroTerminal";
 import { Panel } from "./Window";
 
-/** The landing header: one cell — pitch and install command on the left, a terminal you can type in on the right. */
+/** The landing header: pitch and install command on the left, a terminal you can type in on the right. */
 export function Hero() {
   return (
     <div className="flex items-center lg:min-h-[calc(100svh-3.5rem-2rem)]">
-      <div className="grid w-full grid-cols-[minmax(0,1fr)] gap-10 p-6 sm:p-8 lg:grid-cols-12 lg:items-center">
+      <div className="grid w-full grid-cols-[minmax(0,1fr)] gap-10 lg:grid-cols-12 lg:items-center">
         <div className="lg:col-span-7">
           <h1 className="display">{copy.hero.title}</h1>
           <p className="mt-6 max-w-[34rem] text-pretty text-[18px] text-muted-foreground">{copy.hero.body}</p>
@@ -31,11 +31,9 @@ export function Hero() {
           </div>
         </div>
         <div className="lg:col-span-5">
-          <div className="overflow-hidden rounded-md border bg-card">
-            <Panel label="zsh" aside={<span>{copy.terminal.hint}</span>}>
-              <HeroTerminal />
-            </Panel>
-          </div>
+          <Panel label="zsh" aside={<span>{copy.terminal.hint}</span>}>
+            <HeroTerminal />
+          </Panel>
         </div>
       </div>
     </div>

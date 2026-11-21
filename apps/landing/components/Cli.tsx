@@ -17,8 +17,8 @@ export function Cli() {
   const [selected, setSelected] = useState(0);
   return (
     <Section id="cli" title={copy.cli.title} body={copy.cli.body}>
-      <div className="grid grid-cols-[minmax(0,1fr)] lg:grid-cols-12">
-        <div className="lg:col-span-5">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-10 lg:grid-cols-12 lg:gap-16">
+        <div className="flex flex-col gap-1 lg:col-span-5">
           {commands.map((c, i) => {
             const current = i === selected;
             return (
@@ -27,9 +27,7 @@ export function Cli() {
                 type="button"
                 aria-current={current || undefined}
                 onClick={() => setSelected(i)}
-                className={`block w-full border-b px-6 py-6 text-left transition-colors duration-150 last:border-b-0 sm:px-8 ${
-                  current ? "bg-card" : ""
-                }`}
+                className={`block w-full rounded-lg px-4 py-4 text-left transition-colors duration-150 ${current ? "bg-card" : ""}`}
               >
                 <code className="font-mono text-[13px]">
                   {current ? <span className="text-primary">{"> "}</span> : null}
@@ -45,7 +43,7 @@ export function Cli() {
             );
           })}
         </div>
-        <div className="border-t bg-card lg:col-span-7 lg:border-t-0 lg:border-l">
+        <div className="lg:col-span-7">
           <Panel label="zsh">
             <TerminalBody script={cliScripts[selected]} rows={rows} />
           </Panel>

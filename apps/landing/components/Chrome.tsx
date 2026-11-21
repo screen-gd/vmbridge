@@ -5,7 +5,6 @@ import { copy } from "@/lib/copy";
 import { github } from "@/lib/data";
 import { frame } from "@/lib/styles";
 import { Logo } from "./brand";
-import { Rule } from "./Rule";
 
 const linkClass = "font-mono text-[13px] text-muted-foreground transition-colors duration-150 hover:text-foreground";
 
@@ -13,10 +12,7 @@ const linkClass = "font-mono text-[13px] text-muted-foreground transition-colors
 export function Nav() {
   return (
     <header className="sticky top-0 z-40 bg-background">
-      <div className={`${frame} relative flex h-14 items-center gap-6 px-6 sm:px-8`}>
-        <div className="absolute inset-x-0 bottom-0">
-          <Rule />
-        </div>
+      <div className={`${frame} flex h-14 items-center gap-6`}>
         <Link href="/" className="flex items-center gap-2.5 font-medium">
           <Logo className="size-6" />
           VM Bridge
@@ -44,19 +40,16 @@ export function Nav() {
 export function Footer() {
   return (
     <footer className="pb-8">
-      <div className={frame}>
-        <Rule />
-        <div className="flex h-16 items-center gap-4 px-6 sm:px-8">
-          <Logo className="size-5" />
-          <span className="text-sm text-muted-foreground">{copy.footer.line}</span>
-          <div className="ml-auto flex gap-5">
-            <Link href="/docs" className={linkClass}>
-              {copy.nav.docs}
-            </Link>
-            <a href={github} className={linkClass}>
-              {copy.nav.github}
-            </a>
-          </div>
+      <div className={`${frame} flex h-16 items-center gap-4`}>
+        <Logo className="size-5" />
+        <span className="text-sm text-muted-foreground">{copy.footer.line}</span>
+        <div className="ml-auto flex gap-5">
+          <Link href="/docs" className={linkClass}>
+            {copy.nav.docs}
+          </Link>
+          <a href={github} className={linkClass}>
+            {copy.nav.github}
+          </a>
         </div>
       </div>
     </footer>

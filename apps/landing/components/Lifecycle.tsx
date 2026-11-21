@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { copy } from "@/lib/copy";
 import { useReducedMotion } from "@/lib/hooks";
-import { cell } from "@/lib/styles";
 import { Section } from "./Section";
 import { stateDot } from "./Topology";
 import { Panel } from "./Window";
@@ -118,7 +117,7 @@ export function Lifecycle() {
 
   return (
     <Section id="lifecycle" title={copy.lifecycle.title} body={copy.lifecycle.body}>
-      <div className="grid grid-cols-[minmax(0,1fr)] lg:grid-cols-12">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-10 lg:grid-cols-12 lg:items-center lg:gap-16">
         <div className="flex lg:col-span-7">
           <Panel
             className="flex w-full flex-col"
@@ -135,7 +134,7 @@ export function Lifecycle() {
               <div className="h-px origin-left bg-primary" style={{ animation: "drain 8000ms linear forwards" }} />
             ) : null}
             <div className="flex min-h-[28rem] flex-1 flex-col">
-              <div className="flex min-h-0 flex-1 basis-0 flex-col justify-end gap-5 overflow-hidden p-6 [mask-image:linear-gradient(to_bottom,transparent,black_3.5rem)] sm:p-8">
+              <div className="flex min-h-0 flex-1 basis-0 flex-col justify-end gap-5 overflow-hidden p-5 [mask-image:linear-gradient(to_bottom,transparent,black_3.5rem)] sm:p-6">
                 {items.map((item) =>
                   item.kind === "user" ? (
                     <div key={item.id} className="ml-auto max-w-[80%] rounded-md bg-muted px-3.5 py-2 text-base" style={item.animate ? rise : undefined}>
@@ -153,7 +152,7 @@ export function Lifecycle() {
                   ),
                 )}
               </div>
-              <div className="mx-6 mt-0 mb-6 flex h-12 items-center gap-2 rounded-md bg-muted pr-1.5 pl-3.5 sm:mx-8 sm:mb-8">
+              <div className="mx-5 mt-0 mb-5 flex h-12 items-center gap-2 rounded-md bg-muted pr-1.5 pl-3.5 sm:mx-6 sm:mb-6">
                 <span aria-hidden className="flex-1 truncate text-base text-muted-foreground">
                   {message}
                 </span>
@@ -171,7 +170,7 @@ export function Lifecycle() {
           </Panel>
         </div>
 
-        <div className={`${cell} flex flex-col justify-center border-t lg:col-span-5 lg:border-t-0 lg:border-l`}>
+        <div className="flex flex-col justify-center lg:col-span-5">
           <div className="flex flex-col gap-4">
             {copy.lifecycle.states.map((state, i) => (
               <div
@@ -184,7 +183,7 @@ export function Lifecycle() {
               </div>
             ))}
           </div>
-          <div className="mt-8 grid border-t pt-6">
+          <div className="mt-6 grid">
             {copy.lifecycle.states.map((state, i) => (
               <p
                 key={state.name}
