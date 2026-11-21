@@ -9,7 +9,6 @@
   --muted-foreground: rgb(255 255 255 / 0.62);
   --faint: rgb(255 255 255 / 0.38);
   --border: rgb(255 255 255 / 0.08);
-  --rule: rgb(255 255 255 / 0.2);
   --primary: #8b5cf6;
   --radius: 6px;
 }
@@ -26,7 +25,6 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-faint: var(--faint);
   --color-border: var(--border);
-  --color-rule: var(--rule);
   --color-primary: var(--primary);
 }
 
@@ -44,6 +42,18 @@
     font-size: 16px;
     line-height: 1.65;
     overflow-x: clip;
+  }
+  /* Faint tinted dots in the side margins, outside the page frame. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image: radial-gradient(color-mix(in oklab, var(--primary) 45%, transparent) 1px, transparent 1.5px);
+    background-size: 7px 7px;
+    opacity: 0.5;
+    mask-image: linear-gradient(to right, black, transparent 22%, transparent 78%, black);
   }
   code,
   kbd,

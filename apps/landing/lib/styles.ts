@@ -1,8 +1,8 @@
 /** The page container: centred, full width, capped at 1280px. Cells own their padding. */
 export const container = "mx-auto w-full max-w-[1280px]";
 
-/** The outer frame: the container plus the two vertical hairlines that rule the whole page. */
-export const frame = `${container} sm:border-x`;
+/** The outer frame: the container plus the two vertical hairlines that rule the whole page. Opaque, so the margin dot texture never bleeds inside. */
+export const frame = `${container} bg-background sm:border-x`;
 
 /** The padding of one grid cell. */
 export const cell = "p-6 sm:p-8";
