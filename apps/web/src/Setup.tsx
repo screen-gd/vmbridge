@@ -12,7 +12,7 @@ import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle }
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAction } from "@/hooks/use-action";
-import { ago, api } from "./api.ts";
+import { ago, api, elapsed, useTick } from "./api.ts";
 import { AgentLogo, ProviderLogo } from "./brand.tsx";
 import { CopyButton } from "./CopyButton.tsx";
 import { Page, Section, type Tab } from "./Page.tsx";
@@ -39,13 +39,61 @@ export function Setup({ overview }: { overview: Overview }) {
   );
 }
 
-function providerStatus(provider: ProviderInfo) {
+export function ProviderStatus({ provider }: { provider: ProviderInfo }) {
+  const { setup } = provider;
+  if (provider.added && setup.state === "building") return <SettingUp startedAt={setup.startedAt} />;
+  if (provider.added && setup.state === "failed") return "Setup failed";
+  if (provider.problem) return <span className="text-destructive">Needs attention</span>;
   if (provider.isDefault) return "Default";
   if (provider.added) return "Added";
   return provider.configured ? "Ready" : "Not set up";
 }
 
-function Providers({ overview }: { overview: Overview }) {
+/** Ticks once a second while shown. */
+function SettingUp({ startedAt }: { startedAt: number }) {
+  const now = useTick(1000);
+  return <>Setting up, {elapsed(startedAt, now)}</>;
+}
+
+/** The base snapshot new VMs start from: shown once a provider is added, while it builds and after. */
+function ProviderSetup({ provider, busy, onRetry }: { provider: ProviderInfo; busy: boolean; onRetry: () => void }) {
+  const { setup } = provider;
+  const dot = (color: string) => <span className={`size-2 shrink-0 rounded-full ${color}`} />;
+  if (setup.state === "building") {
+    return (
+      <p className="flex items-center gap-2 text-sm text-primary">
+        {dot("bg-primary")}
+        <SettingUp startedAt={setup.startedAt} />
+      </p>
+    );
+  }
+  if (setup.state === "ready") {
+    return (
+      <p className="flex items-center gap-2 text-sm text-success">
+        {dot("bg-success")}
+        Ready
+      </p>
+    );
+  }
+  if (setup.state !== "failed") return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <div className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
+        <p className="flex items-start gap-2 text-destructive">
+          <span className="mt-1.5 size-2 shrink-0 rounded-full bg-destructive" />
+          <span className="min-w-0 break-words">Setup failed: {setup.reason}</span>
+        </p>
+        <p className="text-muted-foreground">New VMs here start the slower way until it works.</p>
+      </div>
+      <Button type="button" variant="outline" size="sm" disabled={busy} onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+/** Every provider, and the chosen one's settings. `bare` leaves out the list's heading, for onboarding's own. */
+export function Providers({ overview, bare }: { overview: Overview; bare?: boolean }) {
   const [list, setList] = useState<ProviderInfo[]>([]);
   const [chosen, setChosen] = useState<ProviderId | null>(overview.defaultProvider);
   const load = useAction();
@@ -58,28 +106,39 @@ function Providers({ overview }: { overview: Overview }) {
       setChosen((current) => current ?? providers[0]?.id ?? null);
     });
   }, [added, overview.defaultProvider]);
-  const provider = list.find((entry) => entry.id === chosen);
+  // The list loads once per change of providers, while each added provider's setup comes live with the overview.
+  const live = list.map((entry) => {
+    const added = overview.providers.find((candidate) => candidate.id === entry.id);
+    return added ? { ...entry, setup: added.setup, problem: added.problem } : entry;
+  });
+  const provider = live.find((entry) => entry.id === chosen);
   const replace = (next: ProviderInfo) => setList((current) => current.map((entry) => (entry.id === next.id ? next : entry)));
+
+  const picker = (
+    <>
+      <RadioGroup value={chosen ?? ""} onValueChange={(value) => setChosen(value as ProviderId)} className="grid gap-2 sm:grid-cols-2">
+        {live.map((entry) => (
+          <FieldLabel key={entry.id} htmlFor={`provider-${entry.id}`}>
+            <Field orientation="horizontal" className="items-center">
+              <ProviderLogo id={entry.id} className="size-9 rounded-lg" />
+              <FieldContent>
+                <FieldTitle>{entry.label}</FieldTitle>
+                <FieldDescription>
+                  <ProviderStatus provider={entry} />
+                </FieldDescription>
+              </FieldContent>
+              <RadioGroupItem value={entry.id} id={`provider-${entry.id}`} />
+            </Field>
+          </FieldLabel>
+        ))}
+      </RadioGroup>
+      {load.error && <FieldError>{load.error}</FieldError>}
+    </>
+  );
 
   return (
     <>
-      <Section title="Providers">
-        <RadioGroup value={chosen ?? ""} onValueChange={(value) => setChosen(value as ProviderId)} className="grid gap-2 sm:grid-cols-2">
-          {list.map((entry) => (
-            <FieldLabel key={entry.id} htmlFor={`provider-${entry.id}`}>
-              <Field orientation="horizontal" className="items-center">
-                <ProviderLogo id={entry.id} className="size-9 rounded-lg" />
-                <FieldContent>
-                  <FieldTitle>{entry.label}</FieldTitle>
-                  <FieldDescription>{providerStatus(entry)}</FieldDescription>
-                </FieldContent>
-                <RadioGroupItem value={entry.id} id={`provider-${entry.id}`} />
-              </Field>
-            </FieldLabel>
-          ))}
-        </RadioGroup>
-        {load.error && <FieldError>{load.error}</FieldError>}
-      </Section>
+      {bare ? <div className="flex flex-col gap-5">{picker}</div> : <Section title="Providers">{picker}</Section>}
       {provider && <ProviderForm key={provider.id} provider={provider} onSaved={replace} />}
     </>
   );
@@ -117,6 +176,11 @@ function ProviderForm({ provider, onSaved }: { provider: ProviderInfo; onSaved: 
       toast.success(`New VMs now go to ${provider.label}.`);
     });
 
+  const retry = () =>
+    save.run(async () => {
+      onSaved(await api<ProviderInfo>(`/providers/${provider.id}/setup`, { body: {} }));
+    });
+
   const remove = () =>
     save.run(async () => {
       onSaved(await api<ProviderInfo>(`/providers/${provider.id}`, { method: "DELETE" }));
@@ -135,6 +199,8 @@ function ProviderForm({ provider, onSaved }: { provider: ProviderInfo; onSaved: 
         <div className="flex flex-wrap gap-1.5">
           <Badge variant="secondary">{sleepModes[provider.features.sleep]}</Badge>
         </div>
+        {provider.added && <ProviderSetup provider={provider} busy={save.busy} onRetry={() => void retry()} />}
+        {provider.problem && <p className="break-words text-sm text-destructive">{provider.problem}</p>}
         <FieldGroup>
           {provider.fields.map((field) => {
             const id = `field-${provider.id}-${field.key}`;
@@ -305,7 +371,7 @@ function Agents({ profiles }: { profiles: AgentProfile[] }) {
   return agentKinds.map((agent) => <AgentSection key={agent} agent={agent} profiles={profiles.filter((profile) => profile.agent === agent)} />);
 }
 
-function AgentSection({ agent, profiles }: { agent: AgentKind; profiles: AgentProfile[] }) {
+export function AgentSection({ agent, profiles }: { agent: AgentKind; profiles: AgentProfile[] }) {
   const [adding, setAdding] = useState(false);
   const action = useAction();
   const open = adding || profiles.length === 0;

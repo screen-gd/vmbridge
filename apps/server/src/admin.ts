@@ -1,6 +1,7 @@
 import type { Server } from "bun";
 import {
   agentKinds,
+  machineNameMaxLength,
   providerIds,
   vmSizes,
   type LiveMessage,
@@ -11,8 +12,9 @@ import {
   type VmInfo,
   type VmSize,
 } from "@vmbridge/contracts";
+import { analyticsReport } from "./analytics.ts";
 import { InvalidSignIn, type AgentAuth, type TokenInput } from "./agent-auth/profiles.ts";
-import { TooManyAttempts, type DashboardAuth } from "./auth/dashboard.ts";
+import { InvalidPassword, TooManyAttempts, type DashboardAuth } from "./auth/dashboard.ts";
 import { fetchGitHubAccount, fetchGitHubRepos, GitHubRejected } from "./github.ts";
 import type { Clients } from "./auth/clients.ts";
 import { message, providerValues, type Fleet } from "./fleet.ts";
@@ -22,10 +24,11 @@ import { githubName } from "./gateway/repos.ts";
 import { isWorking } from "./gateway/types.ts";
 import { disableTailscaleHttps, enableTailscaleHttps, networkInfo } from "./network.ts";
 import { providers } from "./providers/index.ts";
-import { envVars, saveEnvVars, type Secrets, type Settings } from "./settings.ts";
+import { envVars, machineName, saveEnvVars, type Secrets, type Settings } from "./settings.ts";
 import { SkillError, type Skills } from "./skills.ts";
 import type { Store } from "./store.ts";
 import type { Traffic } from "./traffic.ts";
+import type { Usage } from "./usage.ts";
 import { envNameProblem, envValueProblem } from "./vm/runtime.ts";
 import type { Stats } from "./vm/stats.ts";
 
@@ -46,11 +49,13 @@ export interface AdminDeps {
   agents: AgentAuth;
   stats: Stats;
   skills: Skills;
+  usage: Usage;
 }
 
 class BadRequest extends Error {}
 
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
+const loggedIn = (cookie: string) => new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json", "set-cookie": cookie } });
 const isProvider = (id: unknown): id is ProviderId => (providerIds as readonly unknown[]).includes(id);
 const isSize = (size: unknown): size is VmSize => (vmSizes as readonly unknown[]).includes(size);
 
@@ -65,8 +70,17 @@ const text = (value: unknown, label: string) => {
   return value.trim();
 };
 
+/** The dashboard sends its own range, such as the start of the month in its time zone. */
+function timeRange(request: Request) {
+  const params = new URL(request.url).searchParams;
+  const from = Number(params.get("from"));
+  const to = Number(params.get("to") ?? Date.now());
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) throw new BadRequest("Send a time range.");
+  return { from, to };
+}
+
 /**
- * The dashboard's API under /admin/api. Every route except login needs the dashboard cookie.
+ * The dashboard's API under /admin/api. Every route except login and first password setup needs the dashboard cookie.
  * Secret values go in and never come out: responses only say whether each one is set.
  */
 export class Admin {
@@ -80,24 +94,34 @@ export class Admin {
       return json({ error: "Send JSON." }, 415);
     }
     try {
-      if (path === "/auth" && request.method === "GET") return json({ authenticated: auth.authenticated(request) });
+      if (path === "/auth" && request.method === "GET") {
+        return json({ authenticated: auth.authenticated(request), hasPassword: auth.hasKey(), onboarded: this.deps.settings.get("onboarded") });
+      }
+      const secure = new URL(request.url).protocol === "https:" || request.headers.get("x-forwarded-proto") === "https";
+      const address = server.requestIP(request)?.address ?? "unknown";
       if (path === "/login" && request.method === "POST") {
         const { key } = await body(request);
-        const secure = new URL(request.url).protocol === "https:" || request.headers.get("x-forwarded-proto") === "https";
-        const cookie = await auth.login(typeof key === "string" ? key : "", server.requestIP(request)?.address ?? "unknown", secure);
+        const cookie = await auth.login(typeof key === "string" ? key : "", address, secure);
         if (!cookie) return json({ error: "That key is not right." }, 401);
-        return new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json", "set-cookie": cookie } });
+        return loggedIn(cookie);
+      }
+      // The first password, set in onboarding with the code only the terminal that started VM Bridge printed.
+      if (path === "/setup" && request.method === "POST") {
+        const { code, key } = await body(request);
+        const cookie = await auth.claim(typeof code === "string" ? code : "", typeof key === "string" ? key : "", address, secure);
+        if (!cookie) return json({ error: "This setup link does not work. Open the link printed in the terminal where VM Bridge is running." }, 401);
+        return loggedIn(cookie);
       }
       if (!auth.authenticated(request)) return json({ error: "Log in first." }, 401);
-      return await this.route(request, path);
+      return await this.route(request, path, server);
     } catch (error) {
       if (error instanceof TooManyAttempts) return json({ error: error.message }, 429);
-      if (error instanceof BadRequest || error instanceof InvalidSignIn || error instanceof GitHubRejected || error instanceof SkillError) return json({ error: error.message }, 400);
+      if (error instanceof BadRequest || error instanceof InvalidPassword || error instanceof InvalidSignIn || error instanceof GitHubRejected || error instanceof SkillError) return json({ error: error.message }, 400);
       return json({ error: message(error) }, 500);
     }
   }
 
-  private async route(request: Request, path: string): Promise<Response> {
+  private async route(request: Request, path: string, server: Server<unknown>): Promise<Response> {
     const { settings, secrets, store, fleet, hub, clients, auth, gateway, agents, skills } = this.deps;
     const method = request.method;
     const [, section, id, action] = path.split("/");
@@ -106,12 +130,43 @@ export class Admin {
       return new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json", "set-cookie": auth.logout(request) } });
     }
     if (path === "/key" && method === "POST") {
-      await auth.setKey(text((await body(request)).key, "The password"));
+      const input = await body(request);
+      const current = typeof input.current === "string" ? input.current : "";
+      const next = text(input.key, "The password");
+      // Not 401: the session is still fine, and the dashboard treats 401 as logged out.
+      const address = server.requestIP(request)?.address ?? "unknown";
+      if (!(await auth.changeKey(current, next, address))) return json({ error: "The current password is not right." }, 403);
+      return json({ ok: true });
+    }
+    if (path === "/onboarding" && method === "POST") {
+      const { sync } = await body(request);
+      if (typeof sync !== "boolean") throw new BadRequest("Say whether to bring your skills and instructions.");
+      // One choice for everything this machine has: every local skill and every agent's global instructions file.
+      if (sync) {
+        skills.setSyncAll(true);
+        for (const agent of agentKinds) skills.instructions.setSync(agent, true);
+      }
+      settings.set("onboarded", true);
       return json({ ok: true });
     }
     if (path === "/overview" && method === "GET") return json(this.overview());
     if (path === "/events" && method === "GET") return this.events(request);
     if (path === "/traffic" && method === "GET") return json(this.deps.traffic.recent);
+    if (path === "/usage" && method === "GET") {
+      const { from, to } = timeRange(request);
+      return json(this.deps.usage.report(from, to));
+    }
+    if (path === "/analytics" && method === "GET") {
+      const { from, to } = timeRange(request);
+      // Days split at the dashboard's midnights.
+      const timeZone = new URL(request.url).searchParams.get("tz") || Intl.DateTimeFormat().resolvedOptions().timeZone;
+      try {
+        return json(analyticsReport(store, this.deps.usage, from, to, timeZone));
+      } catch (error) {
+        if (error instanceof RangeError) throw new BadRequest("Unknown time zone.");
+        throw error;
+      }
+    }
 
     if (path === "/network" && method === "GET") return json(await networkInfo(this.deps.host, this.deps.port));
     if (path === "/network/https" && method === "POST") {
@@ -141,6 +196,12 @@ export class Admin {
           else delete options[field.key];
         }
         settings.set("providerOptions", { ...settings.get("providerOptions"), [id]: options });
+        // New values, such as a key replacing one the provider refused, try a failed setup again, and recheck the
+        // provider at once so a failure from the old key clears (or shows again) now, not at the next check.
+        if (settings.get("providers").includes(id)) {
+          fleet.prepareBase(id, true);
+          void fleet.reconcile(id);
+        }
         fleet.emit("changed");
         return json(this.providerInfo(id));
       }
@@ -157,12 +218,17 @@ export class Admin {
         const added = settings.get("providers");
         if (!added.includes(id)) {
           settings.set("providers", [...added, id]);
-          // So the first VM there can already start from a base snapshot.
-          void fleet.prepareBase(id).catch(() => {});
+          // No VM is created there until it is built, so the first one already starts from it.
+          fleet.prepareBase(id);
         }
         // The first provider added becomes the default.
         if (!settings.get("defaultProvider")) settings.set("defaultProvider", id);
         this.providersChanged();
+        return json(this.providerInfo(id));
+      }
+      if (action === "setup" && method === "POST") {
+        if (!settings.get("providers").includes(id)) throw new BadRequest(`Add ${definition.label} first.`);
+        fleet.prepareBase(id, true);
         return json(this.providerInfo(id));
       }
       if (action === "default" && method === "POST") {
@@ -175,7 +241,10 @@ export class Admin {
       if (!action && method === "DELETE") {
         const remaining = settings.get("providers").filter((entry) => entry !== id);
         settings.set("providers", remaining);
-        void fleet.bases.drop(id).catch(() => {});
+        // Its base snapshots are billed until deleted, so a failure stays on the provider in Setup.
+        void fleet.bases.drop(id).catch((error) =>
+          this.deps.traffic.record({ kind: "provider", operation: "remove provider", provider: id, status: "error", reason: message(error) }),
+        );
         if (settings.get("defaultProvider") === id) settings.set("defaultProvider", remaining[0] ?? null);
         this.providersChanged();
         return json(this.providerInfo(id));
@@ -314,6 +383,15 @@ export class Admin {
         if (version && !/^\d+\.\d+\.\d+(?:-[\w.]+)?$/.test(version)) throw new BadRequest("Use an exact version, such as 0.1.11.");
         settings.set("t3Version", version || null);
       }
+      if (input.machineName !== undefined) {
+        const name = machineName(text(input.machineName, "The machine name"));
+        if (!name) throw new BadRequest(`Keep the machine name to ${machineNameMaxLength} characters.`);
+        settings.set("machineName", name);
+        // Clients subscribed to T3's server config get the new name right away.
+        hub.emit("config");
+      }
+      // A new default size needs its own base snapshot, and a new T3 version an updated one. Either may fix a failed build.
+      if (input.vmSize !== undefined || input.t3Version !== undefined) fleet.prepareBases(true);
       fleet.emit("changed");
       return json(this.overview().settings);
     }
@@ -411,7 +489,7 @@ export class Admin {
     return json({ error: "Not found." }, 404);
   }
 
-  private providerInfo(id: ProviderId): ProviderInfo {
+  private providerInfo(id: ProviderId, problems = this.deps.traffic.problems()): ProviderInfo {
     const definition = providers[id];
     const { settings, secrets } = this.deps;
     const values = { ...settings.get("providerOptions")[id] };
@@ -432,6 +510,8 @@ export class Admin {
       configured: definition.fields.every((field) => !field.required || Boolean(all[field.key])),
       added: settings.get("providers").includes(id),
       isDefault: settings.get("defaultProvider") === id,
+      setup: this.deps.fleet.setup(id),
+      problem: problems.providers.get(id) ?? null,
     };
   }
 
@@ -448,6 +528,7 @@ export class Admin {
     const projects = store.projects();
     const idleMs = settings.get("idleMinutes") * 60_000;
     const skills = this.deps.skills.state();
+    const problems = this.deps.traffic.problems();
     const vms = store
       .vms()
       .filter((vm) => vm.state !== "gone")
@@ -487,6 +568,7 @@ export class Admin {
           stats: vm.state === "ready" || vm.state === "busy" ? this.deps.stats.get(vm.id) : null,
           skillsPending:
             vm.sandboxId !== null && vm.skills !== skills.fingerprint && (skills.skills.length > 0 || skills.instructions.length > 0 || vm.skills !== null),
+          problem: problems.vms.get(vm.id) ?? null,
         };
       });
     return {
@@ -496,13 +578,18 @@ export class Admin {
         github: secrets.has("github.token"),
         agents: agents.some((profile) => profile.inUse),
       },
-      providers: settings.get("providers").map((id) => this.providerInfo(id)),
+      providers: settings.get("providers").map((id) => this.providerInfo(id, problems)),
       defaultProvider,
       repoRules: settings.get("repoRules"),
       github: secrets.has("github.token") ? settings.get("github") : null,
       agents,
       env: Object.keys(envVars(secrets)),
-      settings: { vmSize: settings.get("vmSize"), idleMinutes: settings.get("idleMinutes"), t3Version: settings.get("t3Version") },
+      settings: {
+        machineName: settings.get("machineName"),
+        vmSize: settings.get("vmSize"),
+        idleMinutes: settings.get("idleMinutes"),
+        t3Version: settings.get("t3Version"),
+      },
       clients: clients.list(gateway.connected()),
       vms,
       projects: projects.map((project) => ({
@@ -521,11 +608,18 @@ export class Admin {
 
   /** Server-sent events: every traffic event, and a fresh overview whenever the fleet changes. */
   private events(request: Request) {
-    const { traffic, fleet, hub } = this.deps;
+    const { traffic, fleet, hub, auth } = this.deps;
     const encoder = new TextEncoder();
     let cleanup = () => {};
+    let closed = false;
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
+        const close = () => {
+          if (closed) return;
+          closed = true;
+          cleanup();
+          controller.close();
+        };
         const send = (live: LiveMessage) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(live)}\n\n`));
         let timer: ReturnType<typeof setTimeout> | undefined;
         const changed = () => {
@@ -538,20 +632,23 @@ export class Admin {
         const heartbeat = setInterval(() => controller.enqueue(encoder.encode(": ping\n\n")), 25_000);
         fleet.on("changed", changed);
         hub.on("shell", changed);
+        // The cookie was checked when the stream opened. Stop sending once that session ends.
+        const unwatch = auth.watch(request, close);
         send({ type: "overview", overview: this.overview() });
         cleanup = () => {
           clearTimeout(timer);
           clearInterval(heartbeat);
           unsubscribe();
+          unwatch();
           fleet.off("changed", changed);
           hub.off("shell", changed);
         };
-        request.signal.addEventListener("abort", () => {
-          cleanup();
-          controller.close();
-        });
+        request.signal.addEventListener("abort", close);
       },
-      cancel: () => cleanup(),
+      cancel: () => {
+        closed = true;
+        cleanup();
+      },
     });
     return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" } });
   }

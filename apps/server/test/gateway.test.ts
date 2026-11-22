@@ -7,7 +7,7 @@ import { translate } from "../src/gateway/paths.ts";
 import { githubName, normalizeRemote } from "../src/gateway/repos.ts";
 import { Rpc, type RpcClient } from "../src/gateway/rpc.ts";
 import type { Traffic } from "../src/traffic.ts";
-import { Settings } from "../src/settings.ts";
+import { machineName, Settings } from "../src/settings.ts";
 import type { Wire } from "../src/gateway/types.ts";
 import type { VmLoad } from "../src/placement.ts";
 import { Store, type ProjectRow, type VmRow } from "../src/store.ts";
@@ -159,6 +159,35 @@ describe("remotes", () => {
     for (const bad of ["http://example.com/a/b", "https://user:pass@example.com/a/b", "ext::sh -c id", "https://example.com/a b", "--upload-pack=x"]) {
       expect(() => normalizeRemote(bad)).toThrow();
     }
+  });
+});
+
+describe("machine name", () => {
+  test("defaults to VM Bridge, trims, resets when blank and refuses long names", () => {
+    expect(new Settings(openDatabase(":memory:")).get("machineName")).toBe("VM Bridge");
+    expect(machineName("  Cloud ")).toBe("Cloud");
+    expect(machineName("   ")).toBe("VM Bridge");
+    expect(machineName("x".repeat(40))).toBe("x".repeat(40));
+    expect(machineName("x".repeat(41))).toBeNull();
+  });
+
+  test("is the label T3 gets, and reaches clients already watching the config", async () => {
+    const traffic = { record: () => {} } as unknown as Traffic;
+    const store = new Store(openDatabase(":memory:"));
+    const settings = new Settings(store.db);
+    store.insertVm({ id: "vm1", provider: "boxd", name: "vm1", size: "medium", state: "ready", createdAt: 0 });
+    store.saveSnapshot("vm1", "config", { environment: { orchestrationProtocolVersion: 2 }, providers: [] });
+    const fleet = Object.assign(new EventEmitter(), { backend: () => undefined }) as unknown as Fleet;
+    const hub = new Hub(store, settings, fleet, traffic, unmeasured);
+    expect(hub.descriptor().label).toBe("VM Bridge");
+
+    const sent: { values?: { config: { environment: { label: string } } }[] }[] = [];
+    const client: RpcClient = { clientId: "c1", cancels: new Map(), send: (frame) => sent.push(frame), open: () => true };
+    await new Rpc(hub, {} as never, {} as never, traffic, () => false).handle(client, { _tag: "Request", id: 1, tag: "subscribeServerConfig", payload: {} });
+    settings.set("machineName", "Cloud");
+    hub.emit("config");
+    expect(hub.descriptor().label).toBe("Cloud");
+    expect(sent.at(-1)?.values?.[0]?.config.environment.label).toBe("Cloud");
   });
 });
 

@@ -43,7 +43,7 @@ export interface Projection extends Wire {
 }
 
 export interface ScheduledTasks extends Wire {
-  tasks: (Wire & { id: string; enabled?: boolean; blockedByPolicy?: boolean })[];
+  tasks: (Wire & { id: string; enabled?: boolean; blockedByPolicy?: boolean; nextRunAt?: string | null })[];
   timeZone?: string;
 }
 

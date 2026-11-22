@@ -80,6 +80,32 @@ export interface BaseSnapshot {
 
 const baseFields = { snapshot: "snapshot", stamp: "stamp", createdAt: "created_at", builder: "builder" } as const;
 
+/** `start` is a new VM's first start, `wake` a start from sleep. */
+export type VmEventKind = "create" | "start" | "wake" | "sleep" | "delete";
+
+export interface VmEvent {
+  at: number;
+  vmId: string;
+  provider: ProviderId;
+  size: VmSize;
+  kind: VmEventKind;
+  durationMs: number | null;
+}
+
+/** One agent turn (a T3 run) VM Bridge saw. */
+export interface Turn {
+  threadId: string;
+  runId: string;
+  at: number;
+  vmId: string;
+  provider: ProviderId;
+  /** The project's URL. */
+  repo: string | null;
+  /** T3's agent instance, such as `codex`. */
+  agent: string | null;
+  model: string | null;
+}
+
 /** JSON caches of what each VM's T3 server last reported, kept so sleeping VMs still render. */
 type SnapshotKind = "shell" | "config" | "scheduled_tasks";
 
@@ -331,6 +357,46 @@ export class Store {
         "INSERT INTO clones (project_id, snapshot) VALUES (?, ?) ON CONFLICT (project_id) DO UPDATE SET snapshot = excluded.snapshot",
       )
       .run(projectId, JSON.stringify(snapshot));
+  }
+
+  recordVmEvent(vm: Pick<VmRow, "id" | "provider" | "size">, kind: VmEventKind, durationMs: number | null = null, at = Date.now()) {
+    this.db
+      .query("INSERT INTO vm_events (at, vm_id, provider, size, kind, duration_ms) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(at, vm.id, vm.provider, vm.size, kind, durationMs);
+  }
+
+  vmEvents(from: number, to: number): VmEvent[] {
+    return this.db
+      .query<VmEvent, [number, number]>(
+        "SELECT at, vm_id AS vmId, provider, size, kind, duration_ms AS durationMs FROM vm_events WHERE at >= ? AND at < ? ORDER BY at, id",
+      )
+      .all(from, to);
+  }
+
+  /** Keeps the first sighting: the same run seen again changes nothing. */
+  recordTurn(turn: Turn) {
+    this.db
+      .query("INSERT OR IGNORE INTO turns (thread_id, run_id, at, vm_id, provider, repo, agent, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(turn.threadId, turn.runId, turn.at, turn.vmId, turn.provider, turn.repo, turn.agent, turn.model);
+  }
+
+  turns(from: number, to: number): Turn[] {
+    return this.db
+      .query<Turn, [number, number]>(
+        `SELECT thread_id AS threadId, run_id AS runId, at, vm_id AS vmId, provider, repo, agent, model
+         FROM turns WHERE at >= ? AND at < ? ORDER BY at`,
+      )
+      .all(from, to);
+  }
+
+  /** Background failures in a range, with the provider of their VM when they name only the VM. */
+  errorsIn(from: number, to: number): { at: number; provider: ProviderId | null }[] {
+    return this.db
+      .query<{ at: number; provider: ProviderId | null }, [number, number]>(
+        `SELECT e.at, COALESCE(e.provider, v.provider, (SELECT provider FROM vm_events WHERE vm_id = e.vm_id LIMIT 1)) AS provider
+         FROM errors e LEFT JOIN vms v ON v.id = e.vm_id WHERE e.at >= ? AND e.at < ? ORDER BY e.at`,
+      )
+      .all(from, to);
   }
 
   /** Thread commands applied while their VM was away, waiting to be replayed on it. Oldest first. */

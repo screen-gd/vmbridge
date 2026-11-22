@@ -154,6 +154,74 @@ const migrations = [
     PRIMARY KEY (provider, snapshot)
   );
   `,
+  // The latest background failures (see traffic.ts), kept across restarts. `resolved` is set once the same operation
+  // works again for the same VM or provider.
+  `
+  CREATE TABLE errors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    reason TEXT,
+    vm_id TEXT,
+    provider TEXT,
+    resolved INTEGER NOT NULL DEFAULT 0
+  );
+  `,
+  // Usage for cost estimates (see usage.ts). No foreign keys: the history outlives the VMs and snapshots.
+  `
+  CREATE TABLE vm_usage (
+    id INTEGER PRIMARY KEY,
+    vm_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    size TEXT NOT NULL,
+    state TEXT NOT NULL,
+    repos TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER NOT NULL,
+    open INTEGER NOT NULL
+  );
+  CREATE INDEX vm_usage_time ON vm_usage (ended_at, started_at);
+  CREATE TABLE snapshot_usage (
+    id INTEGER PRIMARY KEY,
+    provider TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    snapshot TEXT NOT NULL,
+    size TEXT,
+    vm_id TEXT,
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER NOT NULL,
+    open INTEGER NOT NULL
+  );
+  CREATE INDEX snapshot_usage_time ON snapshot_usage (ended_at, started_at);
+  `,
+  // VM lifecycle and agent turns for analytics (see analytics.ts). No foreign keys, like usage. Turns hold no
+  // message content: only which thread, run, repository, agent and model.
+  `
+  CREATE TABLE vm_events (
+    id INTEGER PRIMARY KEY,
+    at INTEGER NOT NULL,
+    vm_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    size TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    duration_ms INTEGER
+  );
+  CREATE INDEX vm_events_at ON vm_events (at);
+  CREATE TABLE turns (
+    thread_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    vm_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    repo TEXT,
+    agent TEXT,
+    model TEXT,
+    PRIMARY KEY (thread_id, run_id)
+  );
+  CREATE INDEX turns_at ON turns (at);
+  `,
 ];
 
 export function openDatabase(path: string): Database {

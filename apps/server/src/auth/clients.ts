@@ -5,6 +5,8 @@ import { hashToken, newToken } from "./tokens.ts";
 export const pairingLinkMs = 15 * 60_000;
 export const clientSessionMs = 30 * 86_400_000;
 const ticketMs = 30_000;
+// How often a device in use writes its last-seen time and pushes its session forward.
+const touchEveryMs = 60_000;
 
 interface ClientRow {
   id: string;
@@ -68,14 +70,14 @@ export class Clients {
     })();
   }
 
-  /** The client behind a bearer token, if the session is live. */
+  /** The client behind a bearer token, if the session is live. Each use keeps the session alive for another 30 days. */
   authenticate(bearer: string): { id: string; name: string; expiresAt: number } | null {
     const row = this.db
       .query<ClientRow, [string, number]>(
         "SELECT id, name, created_at, expires_at, last_seen_at FROM clients WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
       )
       .get(hashToken(bearer), Date.now());
-    return row ? { id: row.id, name: row.name, expiresAt: row.expires_at } : null;
+    return row ? { id: row.id, name: row.name, expiresAt: this.touch(row) } : null;
   }
 
   valid(clientId: string): boolean {
@@ -86,8 +88,13 @@ export class Clients {
     );
   }
 
-  touch(clientId: string): void {
-    this.db.query("UPDATE clients SET last_seen_at = ? WHERE id = ?").run(Date.now(), clientId);
+  /** Marks the device seen and slides its session forward, at most once a minute so requests don't each write. Returns the expiry. */
+  private touch(row: ClientRow): number {
+    const now = Date.now();
+    if (row.last_seen_at !== null && now - row.last_seen_at < touchEveryMs) return row.expires_at;
+    const expiresAt = now + clientSessionMs;
+    this.db.query("UPDATE clients SET last_seen_at = ?, expires_at = ? WHERE id = ?").run(now, expiresAt, row.id);
+    return expiresAt;
   }
 
   list(connected: ReadonlySet<string>): ClientInfo[] {

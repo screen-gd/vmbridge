@@ -475,5 +475,6 @@ export async function prepareBase(box: Box, t3Version: string) {
   await prepareVm(box, t3Version, {});
   await startT3(box, null);
   await box.process("t3").stop();
-  await check(box, `rm -rf ${t3DataDir} ${root}/env ${gitConfigPath}`, "Clearing the base VM");
+  // Providers snapshot a running VM like a power cut (Instabox says so), so writes still in memory would be lost.
+  await check(box, `rm -rf ${t3DataDir} ${root}/env ${gitConfigPath} && sync`, "Clearing the base VM");
 }

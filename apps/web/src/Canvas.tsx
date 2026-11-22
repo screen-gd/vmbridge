@@ -192,6 +192,7 @@ function VmCard({ data }: NodeProps<VmNode>) {
         {projects.length > shown.length && <span className="pl-6 text-faint">+{projects.length - shown.length} more</span>}
         {projects.length === 0 && <span className="text-faint">No repository yet</span>}
         {vm.state === "error" && vm.error && <p className="line-clamp-2 text-xs text-destructive">{vm.error}</p>}
+        {vm.state !== "error" && vm.problem && <p className="line-clamp-2 text-xs text-destructive">{vm.problem}</p>}
       </div>
       <div className="flex items-center justify-between gap-3 rounded-b-xl border-t px-3.5 py-2.5">
         <Status {...state} />
@@ -463,12 +464,13 @@ function CanvasMenu({
               <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={1.75} />
               Details
             </ContextMenuItem>
-            {awake ? (
+            {(awake || target.state === "error") && (
               <ContextMenuItem onSelect={() => attempt(api(`/vms/${target.id}/sleep`, { body: {} }))}>
                 <HugeiconsIcon icon={Moon02Icon} strokeWidth={1.75} />
                 Sleep
               </ContextMenuItem>
-            ) : (
+            )}
+            {!awake && (
               <ContextMenuItem disabled={settling} onSelect={() => attempt(api(`/vms/${target.id}/wake`, { body: {} }))}>
                 <HugeiconsIcon icon={PowerIcon} strokeWidth={1.75} />
                 Wake
@@ -490,15 +492,16 @@ function CanvasMenu({
                 </ContextMenuSubTrigger>
                 <ContextMenuSubContent className="w-44">
                   {overview.providers.map((provider) => (
-                    <ContextMenuItem key={provider.id} onSelect={() => create({ provider: provider.id })}>
+                    <ContextMenuItem key={provider.id} disabled={provider.setup.state === "building"} onSelect={() => create({ provider: provider.id })}>
                       <ProviderLogo id={provider.id} className="size-4 rounded" />
                       {provider.label}
+                      {provider.setup.state === "building" && <span className="ml-auto text-xs text-muted-foreground">Setting up</span>}
                     </ContextMenuItem>
                   ))}
                 </ContextMenuSubContent>
               </ContextMenuSub>
             ) : (
-              <ContextMenuItem disabled={!overview.setup.provider} onSelect={() => create({})}>
+              <ContextMenuItem disabled={!overview.providers.some((provider) => provider.setup.state !== "building")} onSelect={() => create({})}>
                 <HugeiconsIcon icon={Add01Icon} strokeWidth={1.75} />
                 New VM
               </ContextMenuItem>
@@ -520,17 +523,20 @@ function NewVm({ overview }: { overview: Overview }) {
   const [picking, setPicking] = useState(false);
   const [provider, setProvider] = useState(overview.defaultProvider);
   const [picked, setSize] = useState(overview.settings.vmSize);
-  const chosen = overview.providers.find((entry) => entry.id === provider) ?? overview.providers[0];
+  // No VM can be created on a provider while it sets up.
+  const ready = overview.providers.filter((entry) => entry.setup.state !== "building");
+  const chosen = ready.find((entry) => entry.id === provider) ?? ready[0];
   const size = picked ?? chosen?.defaultSize;
   const make = (body: object) => void create.run(() => api("/vms", { body })).then((ok) => ok && setPicking(false));
+  const blocked = !overview.setup.provider ? "Add a provider first" : ready.length ? undefined : "Setting up the provider";
   return (
     <>
       <Button
         variant="outline"
         size="lg"
         className="bg-card"
-        disabled={create.busy || !overview.setup.provider}
-        title={overview.setup.provider ? undefined : "Add a provider first"}
+        disabled={create.busy || Boolean(blocked)}
+        title={blocked}
         onClick={() => (overview.providers.length > 1 ? setPicking(!picking) : make({}))}
       >
         <HugeiconsIcon icon={Add01Icon} data-icon="inline-start" strokeWidth={2} />
@@ -546,9 +552,10 @@ function NewVm({ overview }: { overview: Overview }) {
               </SelectTrigger>
               <SelectContent>
                 {overview.providers.map((entry) => (
-                  <SelectItem key={entry.id} value={entry.id}>
+                  <SelectItem key={entry.id} value={entry.id} disabled={entry.setup.state === "building"}>
                     <ProviderLogo id={entry.id} className="size-4 rounded" />
                     {entry.label}
+                    {entry.setup.state === "building" && <span className="text-muted-foreground">Setting up</span>}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -680,6 +687,9 @@ function VmDetails({ vm, overview, now, onClose }: { vm: VmInfo; overview: Overv
           ))}
         </dl>
         {vm.error && <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-[13px] text-destructive">{vm.error}</p>}
+        {vm.state !== "error" && vm.problem && (
+          <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-[13px] text-destructive">{vm.problem}</p>
+        )}
         {awake && <Resources stats={vm.stats} now={now} />}
         <section className="flex flex-col gap-2">
           <h3 className="text-xs font-medium text-muted-foreground">Repositories</h3>
@@ -719,12 +729,13 @@ function VmDetails({ vm, overview, now, onClose }: { vm: VmInfo; overview: Overv
       <Separator />
       <footer className="flex flex-col gap-2 p-4">
         <div className="flex gap-2">
-          {awake ? (
+          {(awake || vm.state === "error") && (
             <Button variant="outline" size="lg" className="flex-1" disabled={action.busy} onClick={() => void action.run(() => api(`/vms/${vm.id}/sleep`, { body: {} }))}>
               <HugeiconsIcon icon={Moon02Icon} data-icon="inline-start" strokeWidth={1.75} />
               Sleep
             </Button>
-          ) : (
+          )}
+          {!awake && (
             <Button variant="outline" size="lg" className="flex-1" disabled={action.busy || settling} onClick={() => void action.run(() => api(`/vms/${vm.id}/wake`, { body: {} }))}>
               <HugeiconsIcon icon={PowerIcon} data-icon="inline-start" strokeWidth={1.75} />
               Wake

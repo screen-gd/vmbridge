@@ -37,10 +37,10 @@ describe("where a new VM goes", () => {
   test("without a size setting, each provider's default applies, the closest it has to 2 vCPU and 8 GB", () => {
     const { settings, fleet } = setup();
     settings.set("vmSize", null);
-    settings.set("providers", ["boxd", "instabox"]);
+    settings.set("providers", ["boxd", "boat"]);
     expect(fleet.placement("https://github.com/acme/api.git")).toEqual({ provider: "boxd", size: "medium" });
-    settings.set("defaultProvider", "instabox");
-    expect(fleet.placement("https://github.com/acme/api.git")).toEqual({ provider: "instabox", size: "small" });
+    settings.set("defaultProvider", "boat");
+    expect(fleet.placement("https://github.com/acme/api.git")).toEqual({ provider: "boat", size: "small" });
   });
 
   test("a VM can only be created on an added provider", async () => {
@@ -89,7 +89,7 @@ describe("upgrading a database from one VM per project", () => {
       const path = join(dir, "main.db");
       // Back to the schema before project_vms, with a project on a VM as that version stored it.
       const old = openDatabase(path);
-      old.run("DROP TABLE project_vms; DROP TABLE base_snapshots; DROP TABLE retired_snapshots; PRAGMA user_version = 5;");
+      old.run("DROP TABLE project_vms; DROP TABLE base_snapshots; DROP TABLE retired_snapshots; DROP TABLE errors; DROP TABLE vm_usage; DROP TABLE snapshot_usage; DROP TABLE vm_events; DROP TABLE turns; PRAGMA user_version = 5;");
       old.run("INSERT INTO vms (id, provider, name, size, state, created_at) VALUES ('vm1', 'boxd', 'vm1', 'medium', 'sleeping', 0)");
       old.run("INSERT INTO projects (id, url, title, vm_id, checkout_path, created_at) VALUES ('p1', 'https://github.com/acme/app.git', 'app', 'vm1', '/workspace/app', 0)");
       old.run("INSERT INTO projects (id, url, title, created_at) VALUES ('p2', 'https://github.com/acme/web.git', 'web', 1)");

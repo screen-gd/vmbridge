@@ -3,28 +3,33 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { Copy01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { copyText } from "@/lib/clipboard";
 
 export function CopyButton({ value, label = "Copy" }: { value: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [result, setResult] = useState<"Copied" | "Copy failed" | null>(null);
   return (
-    <Tooltip>
+    // Stay open while showing the result: the tooltip closes itself on click, which would hide it.
+    <Tooltip open={hovered || result !== null} onOpenChange={setHovered}>
       <TooltipTrigger asChild>
         <Button
           type="button"
           variant="ghost"
           size="icon"
           aria-label={label}
-          onClick={() =>
-            void navigator.clipboard.writeText(value).then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            })
-          }
+          onClick={async (event) => {
+            setResult((await copyText(value, event.currentTarget)) ? "Copied" : "Copy failed");
+            setTimeout(() => setResult(null), 1500);
+          }}
         >
-          <HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} strokeWidth={1.75} className={copied ? "text-success" : undefined} />
+          <HugeiconsIcon
+            icon={result === "Copied" ? Tick02Icon : Copy01Icon}
+            strokeWidth={1.75}
+            className={result === "Copied" ? "text-success" : undefined}
+          />
         </Button>
       </TooltipTrigger>
-      <TooltipContent>{copied ? "Copied" : label}</TooltipContent>
+      <TooltipContent>{result ?? label}</TooltipContent>
     </Tooltip>
   );
 }

@@ -1,6 +1,6 @@
 import { EventEmitter, once } from "node:events";
 import { providers } from "../providers/index.ts";
-import { message, type Fleet } from "../fleet.ts";
+import { mayBeAwake, message, type Fleet } from "../fleet.ts";
 import { labelVcpus, type VmLoad } from "../placement.ts";
 import type { Settings } from "../settings.ts";
 import { primaryVm, type ProjectRow, type Store, type VmRow } from "../store.ts";
@@ -65,6 +65,9 @@ const launchGraceMs = 2 * 60_000;
 
 /** How long a request naming a thread no VM has reported yet waits for one to report it. */
 const unseenThreadWaitMs = 5_000;
+
+/** A VM with an automation sleeps like any other, and wakes this long before the automation runs. */
+const scheduleLeadMs = 2 * 60_000;
 
 /** The local branch a launch starts its worktree from. One taken from origin is on every VM. */
 function launchBranch(strategy: unknown): string | undefined {
@@ -222,6 +225,8 @@ export class Hub extends EventEmitter<HubEvents> {
     for (const held of this.store.heldCommands(vmId)) applyHeldCommand(shell, held.payload, new Date(held.createdAt).toISOString());
     for (const thread of threadsOf(shell)) this.store.setThreadVm(thread.id, vmId);
     this.store.saveSnapshot(vmId, "shell", shell);
+    if (item.kind === "thread.updated" && item.thread) this.recordTurn(vmId, item.thread);
+    else if (item.kind === "snapshot" && !enrichment) for (const thread of threadsOf(shell)) this.recordTurn(vmId, thread);
     if (item.kind === "thread.updated" && item.thread) this.refreshProjectionSoon(vmId, item.thread.id);
     if (item.kind === "snapshot" && !enrichment) void this.cacheMissingProjections(vmId);
     const working = hasLiveWork(shell);
@@ -230,6 +235,27 @@ export class Hub extends EventEmitter<HubEvents> {
     this.setBusy(vmId, working);
     this.bump();
     this.emit("shell");
+  }
+
+  /** Records a thread's latest run as a turn for analytics, once per run. Only IDs and names: never messages. */
+  private recordTurn(vmId: string, thread: Row) {
+    const runId = str(thread.activeRunId) ?? str(thread.latestRunId);
+    const vm = this.store.vm(vmId);
+    if (!runId || !vm) return;
+    const projectId = str(thread.projectId);
+    const model = thread.modelSelection as Wire | undefined;
+    // A run first seen in a snapshot, as after VM Bridge restarts, may have started long before.
+    const updated = Date.parse(str(thread.updatedAt) ?? "");
+    this.store.recordTurn({
+      threadId: thread.id,
+      runId,
+      at: Number.isNaN(updated) ? Date.now() : Math.min(updated, Date.now()),
+      vmId,
+      provider: vm.provider,
+      repo: (projectId && this.store.project(projectId)?.url) || null,
+      agent: str(thread.providerInstanceId) ?? str(model?.provider) ?? null,
+      model: str(model?.model) ?? null,
+    });
   }
 
   /**
@@ -336,7 +362,7 @@ export class Hub extends EventEmitter<HubEvents> {
     const native = [...this.configs.values()][0]?.environment;
     return {
       environmentId: this.settings.get("bridgeId"),
-      label: "VM Bridge",
+      label: this.settings.get("machineName"),
       serverVersion: native?.serverVersion ?? "0.1.0",
       platform: { os: "linux", arch: "x64", machine: "cloud" },
       orchestrationProtocolVersion: 2,
@@ -532,8 +558,19 @@ export class Hub extends EventEmitter<HubEvents> {
     return { tasks: live.flatMap(([vmId, value]) => this.out(value.tasks, vmId) as Wire[]), ...(timeZone ? { timeZone } : {}) };
   }
 
-  hasEnabledSchedule(vmId: string) {
-    return this.schedules.get(vmId)?.tasks.some((task) => task.enabled && !task.blockedByPolicy) ?? false;
+  /** When the next enabled automation on a VM runs, from what T3 there last reported. Null when none is scheduled. */
+  nextRun(vmId: string): number | null {
+    const times = (this.schedules.get(vmId)?.tasks ?? []).flatMap((task) => {
+      const at = task.enabled && !task.blockedByPolicy && typeof task.nextRunAt === "string" ? Date.parse(task.nextRunAt) : NaN;
+      return Number.isNaN(at) ? [] : [at];
+    });
+    return times.length ? Math.min(...times) : null;
+  }
+
+  /** An automation on this awake VM runs soon, or was due moments ago and T3 is about to start it. */
+  private runDue(vmId: string, now: number) {
+    const next = this.nextRun(vmId);
+    return next !== null && now >= next - scheduleLeadMs && now < next + scheduleLeadMs;
   }
 
   /** The VM owning a scheduled task request. A new task goes with its thread or project. */
@@ -930,14 +967,24 @@ export class Hub extends EventEmitter<HubEvents> {
 
   /**
    * Sleeps VMs idle longer than the configured minutes. The VM's own shell decides: a running
-   * turn, queued work, a pending approval, or an enabled automation keeps it awake. First, an idle
+   * turn, queued work, a pending approval, or an automation about to run keeps it awake. First, an idle
    * VM still running with older sign-ins restarts T3 to take the new ones.
    */
   async sweep(now = Date.now()) {
     const idleMs = this.settings.get("idleMinutes") * 60_000;
-    // Automations need their VM awake to fire.
     for (const vm of this.store.vms()) {
-      if (vm.state === "sleeping" && this.hasEnabledSchedule(vm.id)) void this.fleet.ensure(vm.id).catch(() => {});
+      // Automations need their VM awake to run. One that came due since the VM slept, as while VM Bridge was stopped,
+      // also wakes it: T3 then runs it or moves it on.
+      const next = this.nextRun(vm.id);
+      if (vm.state === "sleeping" && next !== null && now >= next - scheduleLeadMs && (vm.lastSleptAt ?? 0) < next) {
+        this.traffic.record({ kind: "system", operation: "Waking VM for an automation", vmId: vm.id });
+        void this.fleet.ensure(vm.id).catch(() => {});
+      }
+      // Failed while it may still run, with no connection to tell whether anything does: it sleeps once idle as long.
+      if (vm.state === "error" && mayBeAwake(vm) && !this.fleet.leased(vm.id) && now - (vm.lastActivityAt ?? vm.createdAt) >= idleMs) {
+        this.traffic.record({ kind: "system", operation: `Failed and idle ${this.settings.get("idleMinutes")} min, sleeping VM`, vmId: vm.id });
+        await this.fleet.sleep(vm.id).catch(() => {});
+      }
     }
     for (const vmId of this.fleet.connected()) {
       const backend = this.fleet.backend(vmId);
@@ -946,7 +993,7 @@ export class Hub extends EventEmitter<HubEvents> {
       const shell = await backend.json<Shell>("/api/orchestration/shell").catch(() => null);
       if (!shell) continue;
       if (await this.updateCredentials(vmId, shell)) continue;
-      if (hasLiveWork(shell) || this.hasEnabledSchedule(vmId)) {
+      if (hasLiveWork(shell) || this.runDue(vmId, now)) {
         this.fleet.touch(vmId, now);
         this.setBusy(vmId, hasLiveWork(shell));
         await this.fleet.keepAlive(vmId).catch(() => {});
@@ -957,6 +1004,23 @@ export class Hub extends EventEmitter<HubEvents> {
       this.traffic.record({ kind: "system", operation: `Idle ${this.settings.get("idleMinutes")} min, sleeping VM`, vmId });
       await this.sleepVm(vmId, shell);
     }
+  }
+
+  /**
+   * As VM Bridge stops: puts every awake VM the idle sweep would not keep awake to sleep, however recently it was used,
+   * as nothing would put it to sleep later. Gives up after `timeoutMs`, so stopping cannot hang on a slow provider.
+   */
+  async sleepIdle(timeoutMs: number, now = Date.now()) {
+    const sleeping = Promise.all(
+      this.fleet.connected().map(async (vmId) => {
+        if (this.fleet.leased(vmId) || this.runDue(vmId, now)) return;
+        const shell = await this.fleet.backend(vmId)?.json<Shell>("/api/orchestration/shell").catch(() => null);
+        if (!shell || hasLiveWork(shell)) return;
+        this.traffic.record({ kind: "system", operation: "VM Bridge stopping, sleeping VM", vmId });
+        await this.sleepVm(vmId, shell);
+      }),
+    ).catch(() => {});
+    await Promise.race([sleeping, Bun.sleep(timeoutMs)]);
   }
 
   /**

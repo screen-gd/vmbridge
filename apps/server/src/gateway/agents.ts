@@ -3,6 +3,9 @@ import type { ProviderEntry, Wire } from "./types.ts";
 
 const names: Record<string, string> = { codex: "Codex", claudeAgent: "Claude", opencode: "OpenCode", pi: "Pi" };
 
+/** An agent's display name from its T3 driver or instance ID. */
+export const agentName = (id: string) => names[id] ?? id;
+
 /** Agents every VM gets installed, so T3 lists them before any VM has reported. */
 export const defaultAgents = ["codex", "claudeAgent"];
 
@@ -31,7 +34,7 @@ export function presentAgent(provider: ProviderEntry, preference: ProviderPrefer
   const report: AgentReport = {
     instanceId: provider.instanceId,
     driver: provider.driver,
-    displayName: preference?.displayName ?? names[provider.driver] ?? provider.driver,
+    displayName: preference?.displayName ?? agentName(provider.driver),
     badgeLabel: badge,
     enabled,
     installed: provider.installed === true,

@@ -78,13 +78,17 @@ async function chooseKey(): Promise<string> {
   }
 }
 
-/** Makes sure a dashboard password exists before the server starts listening. */
-async function ensureKey(force = false) {
+/**
+ * Makes sure a dashboard password exists, from VMBRIDGE_PASSWORD or typed here. With `ask` false it only takes the
+ * variable, leaving the password to the dashboard's onboarding.
+ */
+async function ensureKey({ force = false, ask = true } = {}) {
   const keys = dashboardKey();
   try {
     if (keys.isSet() && !force) return;
     const fromEnv = process.env.VMBRIDGE_PASSWORD;
     if (fromEnv && !force) return await keys.set(fromEnv);
+    if (!ask) return;
     if (!process.stdin.isTTY) {
       throw new Error("Set a dashboard password first: run `vmbridge password` in a terminal, or set VMBRIDGE_PASSWORD.");
     }
@@ -104,16 +108,21 @@ function serverOptions(values: { host?: string; port?: string }) {
 async function run(options: { host: string; port: number }) {
   const existing = runningPid();
   if (existing) throw new Error(`VM Bridge is already running (process ${existing}). Stop it with \`vmbridge stop\`.`);
-  await ensureKey();
+  await ensureKey({ ask: false });
   const server = await start(options);
   mkdirSync(dataDir(), { recursive: true, mode: 0o700 });
   writeFileSync(pidFile(), String(process.pid));
 
   const network = await server.network();
+  // Whoever has the setup code can choose the password, so it only goes to a terminal, never to a service's log file.
+  const setupCode = process.stdout.isTTY ? server.setupCode : null;
+  const page = setupCode ? `/dashboard/onboarding#code=${setupCode}` : "/dashboard";
   console.log(`VM Bridge ${version} is running.\n`);
-  for (const address of network.addresses) console.log(`  ${address.label.padEnd(20)} ${address.url}/dashboard`);
+  for (const address of network.addresses) console.log(`  ${address.label.padEnd(20)} ${address.url}${page}`);
   if (network.tailscale.running && !network.tailscale.httpsUrl) console.log("\n  Turn on Tailscale HTTPS in the dashboard settings for an https:// address.");
-  console.log("\nOpen the dashboard to set up providers and pair devices. Press Ctrl+C to stop.");
+  if (setupCode) console.log("\nOpen a link to choose your password and finish setup. Press Ctrl+C to stop.");
+  else if (server.setupCode) console.log("\nNo dashboard password yet. Set one with `vmbridge password`, or start `vmbridge run` in a terminal for a setup link.");
+  else console.log("\nOpen the dashboard to set up providers and pair devices. Press Ctrl+C to stop.");
 
   let stopping = false;
   const stop = async () => {
@@ -132,7 +141,8 @@ async function stop() {
   const pid = runningPid();
   if (pid) {
     process.kill(pid, "SIGTERM");
-    for (let i = 0; i < 50 && runningPid(); i++) await Bun.sleep(100);
+    // Stopping puts idle VMs to sleep first, which takes up to 15 seconds.
+    for (let i = 0; i < 200 && runningPid(); i++) await Bun.sleep(100);
   }
   if (!pid && !stoppedService) return console.log("VM Bridge is not running.");
   console.log("VM Bridge stopped.");
@@ -159,7 +169,7 @@ async function main() {
     case "stop":
       return stop();
     case "password":
-      return ensureKey(true);
+      return ensureKey({ force: true });
     case "service":
       if (subcommand === "install") {
         await ensureKey();

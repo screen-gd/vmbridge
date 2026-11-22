@@ -109,9 +109,10 @@ export class Backend {
         clearTimeout(timer);
         if (!opened) reject(new Error(`The T3 socket on VM ${this.vmId} closed while connecting.`));
         clearInterval(this.heartbeat);
+        // First, so the streams this ends see the VM reconnecting rather than a dropped connection.
+        if (!this.closing) this.onClose?.();
         for (const [requestId, handler] of this.handlers) handler(disconnected(requestId));
         this.handlers.clear();
-        if (!this.closing) this.onClose?.();
       };
     });
     this.heartbeat = setInterval(() => this.open && this.socket?.send('{"_tag":"Ping"}'), 5_000);

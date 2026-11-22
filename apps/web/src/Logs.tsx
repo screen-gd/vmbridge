@@ -23,7 +23,7 @@ interface Row {
 }
 
 const sameRequest = (a: TrafficEvent, b: TrafficEvent) =>
-  a.kind === b.kind && a.operation === b.operation && a.clientId === b.clientId && a.vmId === b.vmId && (a.status ?? "ok") === (b.status ?? "ok");
+  a.kind === b.kind && a.operation === b.operation && a.clientId === b.clientId && a.vmId === b.vmId && a.provider === b.provider && (a.status ?? "ok") === (b.status ?? "ok");
 
 function fold(events: TrafficEvent[]): Row[] {
   const rows: Row[] = [];
@@ -129,7 +129,7 @@ export function Logs({ overview, traffic }: { overview: Overview; traffic: Traff
     const shown = events.filter((event) => {
       if (errorsOnly && event.status !== "error") return false;
       if (!needle) return true;
-      const haystack = [event.operation, event.kind, clients.get(event.clientId ?? ""), vms.get(event.vmId ?? "")?.name].join(" ").toLowerCase();
+      const haystack = [event.operation, event.reason, event.provider, event.kind, clients.get(event.clientId ?? ""), vms.get(event.vmId ?? "")?.name].join(" ").toLowerCase();
       return haystack.includes(needle);
     });
     return fold(shown);
@@ -235,6 +235,11 @@ export function Logs({ overview, traffic }: { overview: Overview; traffic: Traff
                       <ProviderLogo id={vm.provider} className="size-4 rounded" />
                       <span className="truncate">{vm.name}</span>
                     </>
+                  ) : last.provider ? (
+                    <>
+                      <ProviderLogo id={last.provider} className="size-4 rounded" />
+                      <span className="truncate">{last.provider}</span>
+                    </>
                   ) : device ? (
                     <>
                       <HugeiconsIcon icon={LaptopIcon} className="size-4 shrink-0" strokeWidth={1.75} />
@@ -248,7 +253,10 @@ export function Logs({ overview, traffic }: { overview: Overview; traffic: Traff
                   )}
                 </span>
                 <span className={cn("flex min-w-0 items-center gap-2", failed ? "text-destructive" : "text-foreground")}>
-                  <span className="truncate">{last.operation}</span>
+                  <span className="truncate">
+                    {last.operation}
+                    {last.reason && `: ${last.reason}`}
+                  </span>
                   {row.count > 1 && (
                     <Badge variant="secondary" className="shrink-0 font-mono font-normal">
                       ×{row.count}

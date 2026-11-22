@@ -19,6 +19,7 @@ import { Secrets, Settings } from "./settings.ts";
 import { Skills } from "./skills.ts";
 import { Store } from "./store.ts";
 import { Traffic } from "./traffic.ts";
+import { Usage } from "./usage.ts";
 import { Stats } from "./vm/stats.ts";
 
 export { version };
@@ -52,7 +53,7 @@ export async function start(options: StartOptions = {}) {
   const settings = new Settings(db);
   const secrets = new Secrets(db);
   const store = new Store(db);
-  const traffic = new Traffic();
+  const traffic = new Traffic(db);
 
   const agents = new AgentAuth(join(dir, "auths"), settings);
   const skills = new Skills(db);
@@ -62,6 +63,9 @@ export async function start(options: StartOptions = {}) {
     void fleet.shareSkills();
   });
   const stats = new Stats(fleet);
+  const usage = new Usage(store, () => fleet.connected());
+  for (const event of ["changed", "awake", "offline"] as const) fleet.on(event, () => usage.sync());
+  usage.start();
   const hub = new Hub(store, settings, fleet, traffic, stats);
   agents.onChange = () => {
     fleet.emit("changed");
@@ -73,7 +77,7 @@ export async function start(options: StartOptions = {}) {
   const rpc = new Rpc(hub, clones, branches, traffic, () => secrets.has("github.token"));
   const gateway = new T3Gateway(hub, rpc, clients);
   const auth = new DashboardAuth(db, settings);
-  const admin = new Admin({ version, startedAt: Date.now(), host, port, settings, secrets, store, fleet, hub, traffic, clients, auth, gateway, agents, stats, skills });
+  const admin = new Admin({ version, startedAt: Date.now(), host, port, settings, secrets, store, fleet, hub, traffic, clients, auth, gateway, agents, stats, skills, usage });
 
   const server = Bun.serve<SocketData>({
     hostname: host,
@@ -83,7 +87,11 @@ export async function start(options: StartOptions = {}) {
     idleTimeout: 60,
     development: process.env.VMBRIDGE_DEV === "1",
     // The dashboard lives under /dashboard, a path T3 clients never request.
-    routes: { "/dashboard": dashboard, "/": new Response(null, { status: 302, headers: { location: "/dashboard" } }) },
+    routes: {
+      "/dashboard": dashboard,
+      "/dashboard/onboarding": dashboard,
+      "/": new Response(null, { status: 302, headers: { location: "/dashboard" } }),
+    },
     fetch(request, server) {
       const path = new URL(request.url).pathname;
       if (path.startsWith("/admin/api/")) return admin.fetch(request, server);
@@ -99,7 +107,7 @@ export async function start(options: StartOptions = {}) {
     sweeping = true;
     hub
       .sweep()
-      .catch(() => {})
+      .catch((error) => traffic.record({ kind: "system", operation: "idle sweep", status: "error", reason: error instanceof Error ? error.message : String(error) }))
       .finally(() => (sweeping = false));
   }, 15_000);
   const codexSync = setInterval(() => void fleet.syncCodexAuth().catch(() => {}), 60 * 60_000);
@@ -124,6 +132,8 @@ export async function start(options: StartOptions = {}) {
   return {
     port: server.port ?? port,
     host,
+    /** Opens first password setup in the dashboard. Null when a password exists. Show it only to whoever started VM Bridge. */
+    setupCode: auth.createSetupCode(),
     network: () => networkInfo(host, server.port ?? port),
     async stop() {
       clearInterval(sweep);
@@ -132,8 +142,11 @@ export async function start(options: StartOptions = {}) {
       clearInterval(skillWatch);
       gateway.close();
       await server.stop(true);
+      // Some providers have no idle timeout of their own: a VM left awake here would run until VM Bridge starts again.
+      await hub.sleepIdle(15_000);
       hub.close();
       fleet.close();
+      usage.close();
       db.close();
     },
   };

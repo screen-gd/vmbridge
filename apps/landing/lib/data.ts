@@ -285,7 +285,7 @@ export const faq = [
   },
   {
     question: "How do I install VM Bridge?",
-    answer: `On macOS or Linux, run \`${install}\`. Then run \`vmbridge\`, choose a dashboard password and open \`/dashboard\` to add a provider and pair T3 Code.`,
+    answer: `On macOS or Linux, run \`${install}\`. Then run \`vmbridge\` and open the setup link it prints to choose a password, add a provider and sign in your agents. Pair T3 Code from the dashboard.`,
   },
 ];
 

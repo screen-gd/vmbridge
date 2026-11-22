@@ -1,4 +1,5 @@
 import { Boxd, NotFoundError } from "@boxd-sh/sdk";
+import { SandboxError } from "@opencoredev/sandbox-sdk";
 import { boxd } from "@opencoredev/sandbox-sdk/boxd";
 import { freestyle } from "@opencoredev/sandbox-sdk/freestyle";
 import { instabox } from "@opencoredev/sandbox-sdk/instabox";
@@ -74,17 +75,40 @@ const instaboxProvider: ProviderDefinition = {
     keepsMemory: true,
   },
   sizes: { small: "2 vCPU, 4 GB", medium: "4 vCPU, 8 GB", large: "8 vCPU, 16 GB" },
-  defaultSize: "small",
+  // The free plan allows only 4 vCPU, 8 GB and refuses any other size.
+  defaultSize: "medium",
   open(config) {
-    return sdkDriver({
+    const driver = sdkDriver({
       id: "instabox",
       provider: instabox({ apiKey: required(config, "apiKey", "Instabox API key") }),
       sleep: "pause",
       // Instabox allows 5 to 30 minutes. Use the longest as a safety net behind VM Bridge's own sleep.
       create: { idleTimeoutMs: minutes(30) },
     });
+    return {
+      ...driver,
+      create: (input, from) =>
+        driver.create(input, from).catch((error: unknown) => {
+          throw instaboxError(error);
+        }),
+    };
   },
 };
+
+/**
+ * Instabox answers 429 `quota_exceeded` when the plan has no machine to spare: the free plan allows one, and a
+ * suspended machine counts. The SDK words every limit the same vague way, so this one says what to do. It stays a
+ * `quota` error, which VM Bridge handles as a full plan.
+ */
+export function instaboxError(error: unknown) {
+  const planFull = error instanceof SandboxError && error.code === "quota" && String(error.cause).includes('"providerCode":"quota_exceeded"');
+  if (!planFull) return error;
+  return new SandboxError("Your Instabox plan's machine limit is reached. Delete a machine or upgrade the plan.", {
+    code: "quota",
+    provider: "instabox",
+    cause: error,
+  });
+}
 
 const railwayResources = {
   small: { cpu: 1, memoryGB: 2 },

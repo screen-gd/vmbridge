@@ -7,7 +7,9 @@ import type { AgentAuth, AgentSecrets } from "../src/agent-auth/profiles.ts";
 import { openDatabase } from "../src/db.ts";
 import { Fleet } from "../src/fleet.ts";
 import { Hub } from "../src/gateway/hub.ts";
+import { Rpc, type RpcClient } from "../src/gateway/rpc.ts";
 import type { Shell, Wire } from "../src/gateway/types.ts";
+import type { SandboxInfo } from "@opencoredev/sandbox-sdk/provider";
 import type { Box, Driver } from "../src/providers/index.ts";
 import { saveEnvVars, Secrets, Settings } from "../src/settings.ts";
 import { Skills } from "../src/skills.ts";
@@ -95,7 +97,8 @@ function setup(skillRoots?: string[]) {
   settings.set("t3Version", "1.0.0");
   const store = new Store(db);
   const secrets = new Secrets(db);
-  const traffic = { record: () => {} } as unknown as Traffic;
+  const recorded: Parameters<Traffic["record"]>[0][] = [];
+  const traffic = { record: (event: Parameters<Traffic["record"]>[0]) => void recorded.push(event) } as unknown as Traffic;
   const signIns: AgentSecrets = {};
   const agents = { vmSecrets: async () => ({ ...signIns }), adoptCodex: () => {}, codexDue: () => false } as unknown as AgentAuth;
   const skills = skillRoots ? new Skills(db, () => skillRoots) : new Skills(db);
@@ -192,6 +195,7 @@ function setup(skillRoots?: string[]) {
     connect: async () => box,
     keepAlive: async () => {},
     deleteCheckpoint: async (checkpoint: string) => void events.push(`delete checkpoint ${checkpoint}`),
+    list: async (): Promise<SandboxInfo[]> => [],
   };
   /** Another Fleet on the same database, as after VM Bridge restarts. */
   const newFleet = () => {
@@ -201,7 +205,7 @@ function setup(skillRoots?: string[]) {
     return fleet;
   };
   const fleet = newFleet();
-  return { t3, store, settings, secrets, fleet, newFleet, driver, box, events, traffic, signIns, files, server, skills, synced, order, calls };
+  return { t3, store, settings, secrets, fleet, newFleet, driver, box, events, traffic, recorded, signIns, files, server, skills, synced, order, calls };
 }
 
 describe("creating and deleting VMs", () => {
@@ -230,6 +234,90 @@ describe("creating and deleting VMs", () => {
     expect(a).toBe(b);
     expect(store.vms()).toHaveLength(1);
     expect(events).toEqual(["create", "wake"]);
+  });
+
+  test("records create, first start, sleep, wake and delete for analytics, but not a reconnect", async () => {
+    const { fleet, store, newFleet } = setup();
+    const vm = await fleet.create();
+    await fleet.ensure(vm.id);
+    await fleet.sleep(vm.id);
+    // A wake connects after the sleep, never in the same millisecond as here.
+    await Bun.sleep(2);
+    await fleet.ensure(vm.id);
+    // VM Bridge restarts while the VM runs: connecting again is not a start.
+    fleet.close();
+    const after = newFleet();
+    await after.ensure(vm.id);
+    await after.destroy(vm.id);
+    const recorded = store.vmEvents(0, Date.now() + 1);
+    expect(recorded.map((event) => event.kind)).toEqual(["create", "start", "sleep", "wake", "delete"]);
+    expect(recorded.every((event) => event.vmId === vm.id && event.provider === "boxd")).toBe(true);
+    expect(recorded.find((event) => event.kind === "wake")?.durationMs).toBeNumber();
+  });
+});
+
+describe("VMs VM Bridge lost track of", () => {
+  const sandbox = (id: string, key: string | undefined, bridge: string): SandboxInfo => ({ id, key, labels: { "sandbox-sdk": "1", vmbridge: bridge }, state: "running", createdAt: 0 });
+
+  test("deletes this bridge's VMs nobody has on record and drops creates a restart cut short, touching nothing else", async () => {
+    const { fleet, store, settings, driver, events } = setup();
+    const ours = settings.get("bridgeId").slice(0, 12);
+    const kept = await fleet.create();
+    // Created before VM Bridge stopped: the row never got its sandbox.
+    store.insertVm({ id: "aaaaaaaaaaaa", provider: "boxd", name: "vm-aaaaaa", size: "medium", state: "provisioning", createdAt: 0 });
+    store.saveBase("boxd", "medium", { builder: "sb-builder" });
+    driver.list = async () => [
+      sandbox("sb1", kept.id, ours),
+      sandbox("sb-stuck", "aaaaaaaaaaaa", ours),
+      sandbox("sb-deleted-row", "bbbbbbbbbbbb-m1abc", ours),
+      sandbox("sb-build", "base-cccccccccccc", ours),
+      sandbox("sb-builder", "base-dddddddddddd", ours),
+      sandbox("sb-other-bridge", "eeeeeeeeeeee", "otherbridge0"),
+      sandbox("sb-no-key", undefined, ours),
+      sandbox("sb-own-key", "my-app", ours),
+    ];
+    events.length = 0;
+    await fleet.reconcile("boxd");
+    expect(events).toEqual(["destroy sb-stuck", "destroy sb-deleted-row", "destroy sb-build"]);
+    expect(store.vm("aaaaaaaaaaaa")).toBeNull();
+    expect(store.vm(kept.id)).not.toBeNull();
+  });
+
+  test("leaves a VM alone while its create runs", async () => {
+    const { fleet, store, settings, driver, box, events } = setup();
+    const created = gate();
+    driver.create = async () => (events.push("create"), await created.promise, box);
+    const creating = fleet.create();
+    await until(() => events.includes("create"));
+    const [vm] = store.vms();
+    driver.list = async () => [sandbox("sb1", vm!.id, settings.get("bridgeId").slice(0, 12))];
+    await fleet.reconcile("boxd");
+    created.release();
+    await creating;
+    expect(events).toEqual(["create"]);
+    expect(store.vm(vm!.id)).toMatchObject({ sandboxId: "sb1" });
+  });
+
+  test("records whether it worked, so a failure from a refused key clears once the provider answers", async () => {
+    const { fleet, driver, recorded } = setup();
+    driver.list = async () => {
+      throw new Error("Boat GET /sandboxes failed (HTTP 401 unauthorized)");
+    };
+    await fleet.reconcile("boxd");
+    driver.list = async () => [];
+    await fleet.reconcile("boxd");
+    expect(recorded).toEqual([
+      { kind: "provider", operation: "look for untracked VMs", provider: "boxd", status: "error", reason: "Boat GET /sandboxes failed (HTTP 401 unauthorized)" },
+      { kind: "provider", operation: "look for untracked VMs", provider: "boxd", status: "ok" },
+    ]);
+  });
+
+  test("runs on start, before VMs reconnect", async () => {
+    const { store, settings, driver, events, newFleet } = setup();
+    driver.list = async () => [sandbox("sb-lost", "ffffffffffff", settings.get("bridgeId").slice(0, 12))];
+    await newFleet().resume();
+    await until(() => events.includes("destroy sb-lost"));
+    expect(store.vms()).toEqual([]);
   });
 });
 
@@ -286,6 +374,24 @@ describe("checkpoints", () => {
     await fleet.ensure(vm.id);
     expect(events).toEqual(["create", "wake", "sleep", "wake", "delete checkpoint cp1"]);
     expect(store.vm(vm.id)).toMatchObject({ sandboxId: "sb2", checkpoint: null });
+  });
+
+  test("a checkpoint that could not be deleted after a wake is deleted by the next sweep", async () => {
+    const { fleet, store, driver, box, events } = setup();
+    const vm = await fleet.create();
+    await fleet.ensure(vm.id);
+    driver.sleep = async () => (events.push("sleep"), { checkpoint: "cp1" });
+    await fleet.sleep(vm.id);
+    driver.wake = async () => (events.push("wake"), { ...box, id: "sb2" });
+    driver.deleteCheckpoint = async () => {
+      throw new Error("Railway is down.");
+    };
+    await fleet.ensure(vm.id);
+    expect(store.retiredSnapshots("boxd")).toEqual(["cp1"]);
+    driver.deleteCheckpoint = async (checkpoint) => void events.push(`delete checkpoint ${checkpoint}`);
+    await fleet.bases.sweep("boxd");
+    expect(events.at(-1)).toBe("delete checkpoint cp1");
+    expect(store.retiredSnapshots("boxd")).toEqual([]);
   });
 
   test("deleting a VM asleep as a checkpoint deletes the checkpoint", async () => {
@@ -879,5 +985,180 @@ describe("instructions", () => {
     expect(synced.at(-1)!.instructions).toEqual([]);
     expect(store.vm(vm.id)?.skills).toBe(skills.state().fingerprint);
     expect(synced).toHaveLength(3);
+  });
+});
+
+describe("a dropped T3 connection", () => {
+  /** Drops the VM's T3 socket from the VM's side, as when T3 restarts there or the network fails. */
+  const drop = (t3: ReturnType<typeof fakeT3>) => {
+    for (const socket of t3.sockets) socket.close();
+  };
+
+  test("reconnects, and an open thread stream picks up on the new connection without ending", async () => {
+    const { fleet, store, t3, traffic } = setup();
+    fleet.reconnectPausesMs = [1, 1, 1];
+    const hub = new Hub(store, new Settings(store.db), fleet, traffic, unmeasured);
+    fleet.onConnect = async () => {};
+    const requested: string[] = [];
+    t3.state.answer = (tag) => (requested.push(tag), tag.toLowerCase().includes("subscribe") ? open : null);
+    const vm = await fleet.create();
+    const before = await fleet.ensure(vm.id);
+    store.setThreadVm("t1", vm.id);
+    const rpc = new Rpc(hub, {} as never, {} as never, traffic, () => false);
+    const sent: Wire[] = [];
+    const client: RpcClient = { clientId: "c1", cancels: new Map(), send: (frame) => void sent.push(frame as Wire), open: () => true };
+    await rpc.handle(client, { _tag: "Request", id: 1, tag: "orchestration.subscribeThread", payload: { threadId: "t1" } });
+    await until(() => requested.includes("orchestration.subscribeThread"));
+
+    drop(t3);
+    await until(() => requested.filter((tag) => tag === "orchestration.subscribeThread").length === 2);
+    expect(fleet.backend(vm.id)?.open).toBe(true);
+    expect(fleet.backend(vm.id)).not.toBe(before);
+    expect(store.vm(vm.id)?.state).toBe("ready");
+    expect(sent.filter((frame) => frame._tag === "Exit")).toEqual([]);
+    hub.close();
+  });
+
+  test("goes to sleep when it cannot reconnect, so the VM does not run unseen", async () => {
+    const { fleet, store, t3, driver, events } = setup();
+    fleet.reconnectPausesMs = [1, 1, 1];
+    const vm = await fleet.create();
+    await fleet.ensure(vm.id);
+    driver.wake = async () => {
+      events.push("wake");
+      throw new Error("The provider did not answer.");
+    };
+
+    drop(t3);
+    await until(() => store.vm(vm.id)?.state === "sleeping");
+    expect(events).toEqual(["create", "wake", "wake", "wake", "wake", "sleep"]);
+    expect(fleet.backend(vm.id)).toBeUndefined();
+  });
+
+  test("a VM that failed while it may still run is put to sleep by the idle sweep, and reconnected after a restart", async () => {
+    const { fleet, newFleet, store, settings, traffic, events } = setup();
+    const vm = await fleet.create();
+    await fleet.ensure(vm.id);
+    fleet.close();
+    store.updateVm(vm.id, { state: "error", error: "The T3 connection dropped." });
+
+    const restarted = newFleet();
+    restarted.onConnect = async () => {};
+    await restarted.resume();
+    await until(() => store.vm(vm.id)?.state === "ready");
+    expect(events).toEqual(["create", "wake", "wake"]);
+
+    restarted.close();
+    store.updateVm(vm.id, { state: "error" });
+    const hub = new Hub(store, settings, newFleet(), traffic, unmeasured);
+    await hub.sweep();
+    expect(events).toEqual(["create", "wake", "wake"]);
+    await hub.sweep(Date.now() + 24 * 60 * 60_000);
+    expect(events).toEqual(["create", "wake", "wake", "sleep"]);
+    expect(store.vm(vm.id)?.state).toBe("sleeping");
+  });
+});
+
+describe("stopping VM Bridge", () => {
+  test("puts awake VMs with nothing running to sleep, however recently used, and leaves working ones awake", async () => {
+    const { fleet, hub, t3, events } = idleFleet();
+    const vm = await fleet.create();
+    await fleet.ensure(vm.id);
+    t3.state.shell = { threads: [{ id: "t1", status: "running" }] };
+    await hub.sleepIdle(1_000);
+    expect(events).toEqual(["create", "wake"]);
+
+    t3.state.shell = { threads: [{ id: "t1", status: "idle" }] };
+    await hub.sleepIdle(1_000);
+    expect(events).toEqual(["create", "wake", "sleep"]);
+  });
+
+  test("gives up on a provider that does not answer, so stopping cannot hang", async () => {
+    const { fleet, hub, driver } = idleFleet();
+    const vm = await fleet.create();
+    await fleet.ensure(vm.id);
+    driver.sleep = () => new Promise(() => {});
+    const started = Date.now();
+    await hub.sleepIdle(50);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe("the npm registry being unreachable", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  test("still wakes a VM on the T3 version it last ran", async () => {
+    const { fleet, store, settings } = setup();
+    const vm = await fleet.create();
+    await fleet.ensure(vm.id);
+    await fleet.sleep(vm.id);
+
+    settings.set("t3Version", null);
+    const asked: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("registry.npmjs.org")) {
+        asked.push(url);
+        throw new Error("getaddrinfo ENOTFOUND registry.npmjs.org");
+      }
+      return realFetch(input, init);
+    }) as typeof fetch;
+    await fleet.ensure(vm.id);
+    expect(asked).toHaveLength(1);
+    expect(store.vm(vm.id)).toMatchObject({ state: "ready", t3Version: "1.0.0" });
+  });
+});
+
+describe("automations", () => {
+  const minute = 60_000;
+
+  /** An idle, connected VM with one enabled automation next running at `nextRunAt`. */
+  async function scheduled(nextRunAt: number) {
+    const context = setup();
+    context.fleet.onConnect = async () => {};
+    const vm = await context.fleet.create();
+    await context.fleet.ensure(vm.id);
+    context.store.saveSnapshot(vm.id, "scheduled_tasks", { tasks: [{ id: "a1", enabled: true, nextRunAt: new Date(nextRunAt).toISOString() }] });
+    const hub = new Hub(context.store, context.settings, context.fleet, context.traffic, unmeasured);
+    context.fleet.onConnect = async () => {};
+    return { ...context, hub, vm };
+  }
+
+  test("do not keep their VM awake, which wakes a couple of minutes before the next run", async () => {
+    const runAt = Date.now() + 3 * 60 * minute;
+    const { fleet, hub, store, events, vm } = await scheduled(runAt);
+    await hub.sweep(Date.now() + 60 * minute);
+    expect(events).toEqual(["create", "wake", "sleep"]);
+
+    // A manual Sleep stays asleep until the run is near.
+    await hub.sweep(runAt - 10 * minute);
+    expect(events).toEqual(["create", "wake", "sleep"]);
+    await hub.sweep(runAt - minute);
+    await until(() => Boolean(fleet.backend(vm.id)));
+    expect(events).toEqual(["create", "wake", "sleep", "wake"]);
+
+    // Awake for the run, however long the VM has been idle.
+    store.updateVm(vm.id, { lastActivityAt: 0 });
+    await hub.sweep(runAt);
+    expect(fleet.backend(vm.id)).toBeDefined();
+  });
+
+  test("a run that came due while the VM slept wakes it once, not on every sweep", async () => {
+    const runAt = Date.now() - 30 * minute;
+    const { fleet, hub, store, events, vm } = await scheduled(runAt);
+    // As when VM Bridge was stopped through the run: the VM slept before it was due.
+    await fleet.sleep(vm.id);
+    store.updateVm(vm.id, { lastSleptAt: runAt - minute });
+    await hub.sweep();
+    await until(() => Boolean(fleet.backend(vm.id)));
+
+    // T3 reported nothing newer before the VM slept again: it is not woken for that run again.
+    await hub.sweep(Date.now() + 60 * minute);
+    expect(store.vm(vm.id)?.state).toBe("sleeping");
+    await hub.sweep(Date.now() + 61 * minute);
+    expect(events).toEqual(["create", "wake", "sleep", "wake", "sleep"]);
   });
 });

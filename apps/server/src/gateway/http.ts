@@ -120,7 +120,6 @@ export class T3Gateway {
     }
     if (!client) return unauthenticated();
     seen.clientId = client.id;
-    this.clients.touch(client.id);
 
     if (/^\/api\/auth\/websocket-ticket(?:\/rpc)?$/.test(path) && request.method === "POST") {
       const { ticket, expiresAt } = this.clients.ticket(client.id);

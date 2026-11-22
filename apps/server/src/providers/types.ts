@@ -1,4 +1,5 @@
 import type { SandboxBase } from "@opencoredev/sandbox-sdk";
+import type { SandboxInfo } from "@opencoredev/sandbox-sdk/provider";
 import type { ProviderFeatures, ProviderField, ProviderId, SelectOption, VmSize } from "@vmbridge/contracts";
 
 /** The provider-neutral sandbox handle: commands, files, background processes, previews. */
@@ -36,6 +37,11 @@ export interface Driver {
   /** Saves a VM's disk as a base snapshot new VMs can start from. Absent when the provider cannot. */
   snapshot?(box: Box): Promise<string>;
   connect(sandboxId: string): Promise<Box>;
+  /**
+   * Every sandbox carrying `labels`, with the key and labels it was created with. Providers that cannot read a sleeping
+   * sandbox's labels without waking it (boxd) leave sleeping ones out.
+   */
+  list(labels: Record<string, string>): Promise<SandboxInfo[]>;
   /** Provider state of every sandbox carrying `labels`. Absent IDs no longer exist. */
   states(labels: Record<string, string>): Promise<Map<string, ProviderState>>;
   sleep(box: Box): Promise<SleepResult>;

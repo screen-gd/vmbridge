@@ -1,13 +1,14 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, jest, spyOn, test } from "bun:test";
+import { SandboxError } from "@opencoredev/sandbox-sdk";
 import type { AgentAuth } from "../src/agent-auth/profiles.ts";
 import { openDatabase } from "../src/db.ts";
-import { Fleet } from "../src/fleet.ts";
+import { Fleet, SettingUp } from "../src/fleet.ts";
 import type { Box, Driver } from "../src/providers/index.ts";
 import { Secrets, Settings } from "../src/settings.ts";
 import { Skills } from "../src/skills.ts";
 import { Store } from "../src/store.ts";
 import type { Traffic } from "../src/traffic.ts";
-import { baseMaxAgeMs, chooseBase } from "../src/vm/bases.ts";
+import { baseMaxAgeMs, baseSetupLimitMs, chooseBase } from "../src/vm/bases.ts";
 import { setupStamp } from "../src/vm/runtime.ts";
 
 const now = 1_000_000_000_000;
@@ -146,16 +147,34 @@ describe("base snapshots", () => {
     expect(events).toContain("delete old");
   });
 
-  test("a snapshot the provider refuses falls back to a plain create and is replaced", async () => {
+  test("a snapshot the provider no longer has falls back to a plain create and is replaced", async () => {
     const { fleet, store, driver, events } = setup();
     store.saveBase("boxd", "medium", { snapshot: "gone", stamp, createdAt: Date.now() });
     const create = driver.create;
-    driver.create = async (input, from) => (from === "gone" ? Promise.reject(new Error("Snapshot not found.")) : create(input, from));
+    const missing = new SandboxError("Snapshot not found.", { code: "not_found" });
+    driver.create = async (input, from) => (from === "gone" ? Promise.reject(missing) : create(input, from));
     const vm = await fleet.create();
     expect(events).toContain(`create ${vm.sandboxId}`);
     await fleet.bases.settled();
     expect(events).toContain("delete gone");
     expect(store.base("boxd", "medium")?.snapshot).toBe("snap1");
+  });
+
+  test("a full plan or another error creating from a snapshot leaves the snapshot alone", async () => {
+    const { fleet, store, driver, events } = setup();
+    store.saveBase("boxd", "medium", { snapshot: "snap0", stamp, createdAt: Date.now() });
+    const create = driver.create;
+    let refusal: Error = new SandboxError("Quota exceeded.", { code: "quota" });
+    driver.create = async (input, from) => (from ? Promise.reject(refusal) : create(input, from));
+    // Full: a plain create would be refused too, so none is tried.
+    await expect(fleet.create()).rejects.toBe(refusal);
+    expect(events).toEqual([]);
+    refusal = new SandboxError("Bad gateway.", { code: "unavailable" });
+    await fleet.create();
+    await fleet.bases.settled();
+    expect(events).toEqual(["create sb1"]);
+    expect(store.base("boxd", "medium")?.snapshot).toBe("snap0");
+    expect(store.retiredSnapshots("boxd")).toEqual([]);
   });
 
   test("a build VM left by a restart is deleted before the next VM is created, so it cannot hold the last VM allowed", async () => {
@@ -224,9 +243,164 @@ describe("base snapshots", () => {
   test("providers that cannot snapshot create the plain way and build nothing", async () => {
     const { fleet, store, driver, events } = setup();
     delete (driver as Partial<typeof driver>).snapshot;
+    fleet.prepareBase("boxd");
+    expect(fleet.setup("boxd")).toEqual({ state: "unsupported" });
     await fleet.create();
     await fleet.bases.settled();
     expect(events).toEqual(["create sb1"]);
     expect(store.base("boxd", "medium")).toBeNull();
+  });
+});
+
+describe("setting up a provider", () => {
+  test("no VM is created on a provider while its first snapshot builds, and the first one starts from it", async () => {
+    const { fleet, events } = setup();
+    fleet.prepareBase("boxd");
+    expect(fleet.setup("boxd")).toEqual({ state: "building", startedAt: expect.any(Number) });
+    await expect(fleet.create()).rejects.toBeInstanceOf(SettingUp);
+    await expect(fleet.create({ provider: "boxd", size: "large" })).rejects.toBeInstanceOf(SettingUp);
+    await fleet.bases.settled();
+    expect(fleet.setup("boxd")).toEqual({ state: "ready" });
+    events.length = 0;
+    await fleet.create();
+    expect(events).toEqual(["create sb2 from snap1"]);
+  });
+
+  test("the provider stays set up only once the build VM is deleted, so a plan with one VM has it free again", async () => {
+    const { fleet, driver } = setup();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const destroy = driver.destroy;
+    driver.destroy = async (sandboxId) => (await held, destroy(sandboxId));
+    fleet.prepareBase("boxd");
+    await Bun.sleep(10);
+    expect(fleet.setup("boxd").state).toBe("building");
+    await expect(fleet.create()).rejects.toBeInstanceOf(SettingUp);
+    release();
+    await fleet.bases.settled();
+    expect(fleet.setup("boxd").state).toBe("ready");
+  });
+
+  test("providers already added with no snapshot build on start and wait for it", async () => {
+    const { fleet } = setup();
+    await fleet.resume();
+    expect(fleet.setup("boxd").state).toBe("building");
+    await expect(fleet.create()).rejects.toBeInstanceOf(SettingUp);
+    await fleet.bases.settled();
+    expect(fleet.setup("boxd").state).toBe("ready");
+  });
+
+  test("while the default provider sets up, new VMs go to another added provider that is ready", async () => {
+    const { fleet, store, settings } = setup();
+    settings.set("providers", ["boxd", "e2b"]);
+    store.saveBase("e2b", "medium", { snapshot: "e2b-base", stamp, createdAt: Date.now() });
+    fleet.prepareBase("boxd");
+    expect((await fleet.create()).provider).toBe("e2b");
+    // A repository rule naming it falls back the same way.
+    settings.set("repoRules", [{ repo: "acme/app", provider: "boxd", size: null }]);
+    expect(fleet.placement("https://github.com/acme/app").provider).toBe("e2b");
+    await fleet.bases.settled();
+    expect(fleet.placement("https://github.com/acme/app").provider).toBe("boxd");
+  });
+
+  test("a failed setup shows why, leaves the provider usable the plain way, and builds again only on retry", async () => {
+    const { fleet, store, driver, events } = setup();
+    const create = driver.create;
+    // A plan whose only VM is taken: the build cannot get one.
+    driver.create = async () => Promise.reject(new Error("Machine limit reached.\nUpgrade your plan."));
+    fleet.prepareBase("boxd");
+    await fleet.bases.settled();
+    expect(fleet.setup("boxd")).toEqual({ state: "failed", reason: "Machine limit reached." });
+
+    driver.create = create;
+    await fleet.create();
+    fleet.prepareBase("boxd");
+    await fleet.bases.settled();
+    // The VM, and no build after it.
+    expect(events).toEqual(["create sb1"]);
+    expect(fleet.setup("boxd").state).toBe("failed");
+
+    fleet.prepareBase("boxd", true);
+    expect(fleet.setup("boxd").state).toBe("building");
+    await fleet.bases.settled();
+    expect(fleet.setup("boxd")).toEqual({ state: "ready" });
+    expect(store.base("boxd", "medium")?.snapshot).toBe("snap1");
+  });
+
+  test("every build logs its start, and its end with the time taken or the reason it failed", async () => {
+    const { fleet, driver } = setup();
+    const refused = new SandboxError("Boat POST /sandboxes failed (HTTP 401 unauthorized): unauthorized.", { code: "auth" });
+    const logs: string[] = [];
+    const log = spyOn(console, "log").mockImplementation((line: string) => void logs.push(line));
+    const error = spyOn(console, "error").mockImplementation((line: string) => void logs.push(line));
+    try {
+      const create = driver.create;
+      driver.create = async () => Promise.reject(refused);
+      fleet.prepareBase("boxd");
+      await fleet.bases.settled();
+      // A rotated or revoked key: the reason says what to do, not the HTTP error.
+      expect(fleet.setup("boxd")).toEqual({ state: "failed", reason: "boxd refused the API key. Enter a new one in Setup." });
+      driver.create = create;
+      fleet.prepareBase("boxd", true);
+      await fleet.bases.settled();
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+    }
+    expect(logs).toEqual([
+      "[base boxd:medium] build started",
+      expect.stringMatching(/^\[base boxd:medium\] build failed after \d+ s: boxd refused the API key\. Enter a new one in Setup\.$/),
+      "[base boxd:medium] build started",
+      expect.stringMatching(/^\[base boxd:medium\] ready in \d+ s$/),
+    ]);
+  });
+
+  test("a build that hangs is given up at the limit: its VM is deleted and Retry builds again at once", async () => {
+    const { fleet, store, driver, events } = setup();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const snapshot = driver.snapshot;
+    driver.snapshot = async (box) => (await held, snapshot(box));
+    jest.useFakeTimers();
+    try {
+      fleet.prepareBase("boxd");
+      // Fake timers stop `Bun.sleep`, so this waits on the event loop instead.
+      for (let i = 0; i < 200 && !store.base("boxd", "medium")?.builder; i++) await new Promise((resolve) => setImmediate(resolve));
+      jest.advanceTimersByTime(baseSetupLimitMs);
+    } finally {
+      jest.useRealTimers();
+    }
+    const builder = events.find((event) => event.startsWith("create"))!.slice("create ".length);
+    expect(fleet.setup("boxd")).toEqual({ state: "failed", reason: "Setup took longer than 15 minutes." });
+    await until(() => events.includes(`destroy ${builder}`));
+    expect(store.base("boxd", "medium")?.builder).toBeNull();
+
+    driver.snapshot = snapshot;
+    fleet.prepareBase("boxd", true);
+    expect(fleet.setup("boxd").state).toBe("building");
+    await fleet.bases.settled();
+    expect(store.base("boxd", "medium")).toMatchObject({ snapshot: "snap1", builder: null });
+
+    // The stuck call returns at last: its snapshot is too late to use and goes with the replaced ones.
+    release();
+    await until(() => store.retiredSnapshots("boxd").includes("snap2"));
+    expect(store.base("boxd", "medium")?.snapshot).toBe("snap1");
+    expect(fleet.setup("boxd")).toEqual({ state: "ready" });
+  });
+
+  test("removing a provider does not wait for a build that was given up", async () => {
+    const { fleet, store, settings, driver } = setup();
+    driver.snapshot = () => new Promise<string>(() => {});
+    jest.useFakeTimers();
+    try {
+      fleet.prepareBase("boxd");
+      for (let i = 0; i < 200 && !store.base("boxd", "medium")?.builder; i++) await new Promise((resolve) => setImmediate(resolve));
+      jest.advanceTimersByTime(baseSetupLimitMs);
+    } finally {
+      jest.useRealTimers();
+    }
+    settings.set("providers", []);
+    const dropped = await Promise.race([fleet.bases.drop("boxd").then(() => true), Bun.sleep(500).then(() => false)]);
+    expect(dropped).toBe(true);
   });
 });

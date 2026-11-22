@@ -25,7 +25,8 @@ export async function api<T>(path: string, options: { method?: string; body?: un
   });
   const value = (await response.json().catch(() => ({}))) as T & { error?: string };
   if (!response.ok) {
-    if (response.status === 401 && path !== "/login") for (const listener of loggedOut) listener();
+    // A wrong password or setup link is not a lost session.
+    if (response.status === 401 && path !== "/login" && path !== "/setup") for (const listener of loggedOut) listener();
     throw new ApiError(value.error ?? `Request failed (${response.status}).`, response.status);
   }
   return value;
@@ -46,8 +47,14 @@ export function useLive() {
     source.onopen = () => setOnline(true);
     source.onerror = () => {
       setOnline(false);
-      // A closed stream after a failed reconnect usually means the session ended.
-      if (source.readyState === EventSource.CLOSED) void api("/auth").catch(() => {});
+      // A closed stream after a failed reconnect usually means the session ended, such as after a password change elsewhere.
+      if (source.readyState !== EventSource.CLOSED) return;
+      void api<{ authenticated: boolean }>("/auth").then(
+        (auth) => {
+          if (!auth.authenticated) for (const listener of loggedOut) listener();
+        },
+        () => {},
+      );
     };
     source.onmessage = (event) => {
       const live = JSON.parse(event.data as string) as LiveMessage;
@@ -85,6 +92,12 @@ export function duration(ms: number) {
   if (ms < 1) return "<1 ms";
   if (ms < 1000) return `${ms} ms`;
   return `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)} s`;
+}
+
+/** Time since `at` as a running clock, such as "42s" or "3m 05s". */
+export function elapsed(at: number, now = Date.now()) {
+  const seconds = Math.max(0, Math.floor((now - at) / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
 }
 
 export function ago(at: number | null, now = Date.now()) {

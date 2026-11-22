@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { AgentKind, GitHubAccount, ProviderId, RepoRule, VmSize } from "@vmbridge/contracts";
+import { machineNameMaxLength, type AgentKind, type GitHubAccount, type ProviderId, type RepoRule, type VmSize } from "@vmbridge/contracts";
 import type { ServerConfig } from "./gateway/types.ts";
 
 export interface ProviderPreference {
@@ -11,6 +11,10 @@ interface SettingValues {
   /** Stable T3 environment identity. Never changes once created. */
   bridgeId: string;
   dashboardKeyHash: string | null;
+  /** Whether first-run onboarding was finished. Until then the dashboard sends you there. */
+  onboarded: boolean;
+  /** The name T3 shows for this machine. */
+  machineName: string;
   /** Providers added in Setup, in order. VMs on a removed provider keep running but get no new VMs beside them. */
   providers: ProviderId[];
   /** One of `providers`. New VMs go here unless a repository rule picks another. */
@@ -39,9 +43,19 @@ interface SettingValues {
   fallbackConfig: { vmId: string; config: ServerConfig } | null;
 }
 
+const defaultMachineName = "VM Bridge";
+
+/** Trimmed, with blank meaning the default. Null when it is too long. */
+export function machineName(input: string): string | null {
+  const name = input.trim() || defaultMachineName;
+  return name.length <= machineNameMaxLength ? name : null;
+}
+
 const defaults: { [K in keyof SettingValues]: () => SettingValues[K] } = {
   bridgeId: () => crypto.randomUUID(),
   dashboardKeyHash: () => null,
+  onboarded: () => false,
+  machineName: () => defaultMachineName,
   providers: () => [],
   defaultProvider: () => null,
   repoRules: () => [],
@@ -62,6 +76,10 @@ export class Settings {
   constructor(private readonly db: Database) {
     // Persist the identity on first start so pairings survive restarts.
     if (!this.db.query("SELECT 1 FROM settings WHERE key = 'bridgeId'").get()) this.set("bridgeId", defaults.bridgeId());
+    // Installs from before onboarding existed that already have a password and a provider never need it.
+    if (!this.db.query("SELECT 1 FROM settings WHERE key = 'onboarded'").get()) {
+      this.set("onboarded", this.get("dashboardKeyHash") !== null && this.get("providers").length > 0);
+    }
   }
 
   get<K extends keyof SettingValues>(key: K): SettingValues[K] {

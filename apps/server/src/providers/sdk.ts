@@ -87,6 +87,8 @@ export function sdkDriver(options: SdkDriverOptions): Driver {
         }
       : undefined,
 
+    list: (labels) => listSandboxes(provider, { labels }),
+
     async states(labels) {
       const states = new Map<string, ProviderState>();
       for (const info of await listSandboxes(provider, { labels })) states.set(info.id, info.state);

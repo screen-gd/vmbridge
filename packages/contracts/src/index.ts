@@ -6,6 +6,8 @@ export type ProviderId = (typeof providerIds)[number];
 export const vmSizes = ["small", "medium", "large"] as const;
 export type VmSize = (typeof vmSizes)[number];
 
+export const machineNameMaxLength = 40;
+
 export interface ProviderField {
   key: string;
   label: string;
@@ -43,7 +45,21 @@ export interface ProviderInfo {
   added: boolean;
   /** New VMs go here unless a repository rule picks another provider. */
   isDefault: boolean;
+  setup: ProviderSetup;
+  /** The latest background failure on this provider not since put right, such as a VM or snapshot it could not delete. */
+  problem: string | null;
 }
+
+/**
+ * The base snapshot new VMs on a provider start from, at the size they get by default. While the first one builds,
+ * no VM is created there. After a failure, VMs there start the slower way without one.
+ */
+export type ProviderSetup =
+  | { state: "unsupported" }
+  | { state: "none" }
+  | { state: "building"; startedAt: number }
+  | { state: "ready" }
+  | { state: "failed"; reason: string };
 
 /** Where new VMs for one GitHub repository go. Null fields fall back to the defaults. */
 export interface RepoRule {
@@ -158,6 +174,8 @@ export interface VmInfo {
   stats: VmStats | null;
   /** The VM has not got the installed skills or synced instructions yet. A sleeping VM gets them when it wakes. */
   skillsPending: boolean;
+  /** The latest background failure on this VM not since put right, such as a failed sleep that may leave it running. */
+  problem: string | null;
 }
 
 /** Where an installed skill comes from: skills.sh, or a folder on the machine running VM Bridge. */
@@ -268,6 +286,8 @@ export interface GitHubAccount {
 }
 
 export interface BridgeSettings {
+  /** The name T3 shows for this machine. */
+  machineName: string;
   /** Null: each provider's default size. */
   vmSize: VmSize | null;
   idleMinutes: number;
@@ -295,6 +315,174 @@ export interface Overview {
   instructions: InstructionFile[];
 }
 
+export type Currency = "USD" | "EUR";
+
+/** A provider's published prices for the machines VM Bridge creates. Null: the provider does not publish it. */
+export interface ProviderPricing {
+  provider: ProviderId;
+  label: string;
+  /** The machine each size gets. */
+  machines: Record<VmSize, string>;
+  /** The currency the provider publishes its prices in. Estimates convert them to US dollars. */
+  currency: Currency;
+  /** The pricing page the numbers come from. */
+  source: string;
+  /** When they were read from it, YYYY-MM-DD. */
+  asOf: string;
+  /** Per hour while running, at full use. */
+  runningHourly: Record<VmSize, number>;
+  /** Per hour while asleep, before storage billed per GiB. */
+  asleepHourly: Record<VmSize, number | null>;
+  /** Disk or snapshot storage per GiB-month. Null when included or not published. */
+  storageGibMonth: number | null;
+  sleeping: string;
+  snapshots: string;
+  plans: string;
+  /** Why an estimate may be off, such as billing only busy CPU. */
+  caveat?: string;
+}
+
+/** An estimated cost in US dollars. `partial` when part of the time has no published price. */
+export interface Estimate {
+  amount: number;
+  partial: boolean;
+}
+
+export interface VmUsage {
+  vmId: string;
+  name: string;
+  provider: ProviderId;
+  size: VmSize;
+  awakeMs: number;
+  asleepMs: number;
+  /** The VM was deleted since. */
+  deleted: boolean;
+  estimate: Estimate;
+}
+
+export interface ProviderUsage {
+  provider: ProviderId;
+  awakeMs: number;
+  asleepMs: number;
+  estimate: Estimate;
+}
+
+/** Awake time of the VMs holding a repository. A VM holding several counts for each. */
+export interface RepoUsage {
+  /** `owner/name` for GitHub, else the URL. */
+  repo: string;
+  awakeMs: number;
+  vms: number;
+}
+
+/** Base snapshots or sleep checkpoints kept on one provider. */
+export interface SnapshotUsage {
+  provider: ProviderId;
+  kind: "base" | "checkpoint";
+  count: number;
+  /** Total time they were kept. */
+  heldMs: number;
+}
+
+/** Usage and estimated costs between `from` and `to`. */
+export interface UsageReport {
+  from: number;
+  to: number;
+  prices: ProviderPricing[];
+  providers: ProviderUsage[];
+  vms: VmUsage[];
+  repos: RepoUsage[];
+  snapshots: SnapshotUsage[];
+  total: Estimate;
+  /** The fixed rate euro prices convert to US dollars at. */
+  eurUsd: ExchangeRate;
+}
+
+/** US dollars per euro, from `source` on `asOf` (YYYY-MM-DD). */
+export interface ExchangeRate {
+  rate: number;
+  source: string;
+  asOf: string;
+}
+
+/** One provider's time and estimated cost on one day. */
+export interface ProviderDay {
+  provider: ProviderId;
+  awakeMs: number;
+  asleepMs: number;
+  estimate: Estimate;
+}
+
+/** One calendar day in the dashboard's time zone. */
+export interface AnalyticsDay {
+  /** The midnight it starts at. */
+  start: number;
+  providers: ProviderDay[];
+  created: number;
+  deleted: number;
+  wakes: number;
+  sleeps: number;
+  /** Threads with a turn that day. */
+  threads: number;
+  turns: number;
+  /** Provider null: the error names no provider or VM. */
+  errors: { provider: ProviderId | null; count: number }[];
+}
+
+/** VMs created, woken and put to sleep on one provider. Times are medians, null when none was timed. */
+export interface ProviderActivity {
+  provider: ProviderId;
+  created: number;
+  deleted: number;
+  wakes: number;
+  sleeps: number;
+  /** The provider making the VM. */
+  createMs: number | null;
+  /** A new VM's first start: installing and connecting. */
+  startMs: number | null;
+  /** Waking from sleep until connected. */
+  wakeMs: number | null;
+}
+
+export interface SizeActivity {
+  provider: ProviderId;
+  size: VmSize;
+  vms: number;
+  awakeMs: number;
+}
+
+export interface RepoActivity {
+  /** `owner/name` for GitHub, else the URL. */
+  repo: string;
+  awakeMs: number;
+  threads: number;
+  turns: number;
+}
+
+/** Turns one agent and model ran. */
+export interface AgentActivity {
+  /** Display name, such as Codex. */
+  agent: string;
+  model: string | null;
+  threads: number;
+  turns: number;
+}
+
+/** Everything VM Bridge recorded between `from` and `to`, by day where it helps. */
+export interface AnalyticsReport {
+  from: number;
+  to: number;
+  days: AnalyticsDay[];
+  providers: ProviderActivity[];
+  sizes: SizeActivity[];
+  repos: RepoActivity[];
+  agents: AgentActivity[];
+  snapshots: SnapshotUsage[];
+  /** Threads with a turn in the range. */
+  threads: number;
+  total: Estimate;
+}
+
 export interface TrafficEvent {
   id: number;
   at: number;
@@ -302,7 +490,10 @@ export interface TrafficEvent {
   operation: string;
   clientId?: string;
   vmId?: string;
+  provider?: ProviderId;
   status?: "ok" | "error";
+  /** Why it failed. */
+  reason?: string;
   durationMs?: number;
 }
 

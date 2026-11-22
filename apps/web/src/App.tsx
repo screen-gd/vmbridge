@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { parseAsString, parseAsStringLiteral, useQueryStates } from "nuqs";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { File01Icon, FlowConnectionIcon, LaptopIcon, Logout01Icon, MagicWand01Icon, Plug01Icon, Settings01Icon } from "@hugeicons/core-free-icons";
+import { Analytics01Icon, Coins01Icon, File01Icon, FlowConnectionIcon, LaptopIcon, Logout01Icon, MagicWand01Icon, Plug01Icon, Settings01Icon } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -11,10 +11,13 @@ import { useAction } from "@/hooks/use-action";
 import { cn } from "@/lib/utils";
 import { api, onLoggedOut, useLive } from "./api.ts";
 import { Logo } from "./brand.tsx";
+import { Analytics } from "./Analytics.tsx";
 import { Canvas } from "./Canvas.tsx";
+import { Costs } from "./Costs.tsx";
 import { Devices } from "./Devices.tsx";
 import { Logs } from "./Logs.tsx";
 import { boxStyle, NavIndicator, useSlidingNav } from "./nav.tsx";
+import { Onboarding } from "./Onboarding.tsx";
 import { Settings } from "./Settings.tsx";
 import { Setup } from "./Setup.tsx";
 import { Skills } from "./Skills.tsx";
@@ -22,6 +25,8 @@ import { Skills } from "./Skills.tsx";
 const views = [
   { id: "canvas", label: "Canvas", icon: FlowConnectionIcon },
   { id: "logs", label: "Logs", icon: File01Icon },
+  { id: "costs", label: "Costs", icon: Coins01Icon },
+  { id: "analytics", label: "Analytics", icon: Analytics01Icon },
   { id: "setup", label: "Setup", icon: Plug01Icon },
   { id: "skills", label: "Skills", icon: MagicWand01Icon },
   { id: "devices", label: "Devices", icon: LaptopIcon },
@@ -36,20 +41,42 @@ function useView() {
   return [view, (next: View) => void setUrl({ view: next, tab: null })] as const;
 }
 
+interface AuthState {
+  authenticated: boolean;
+  hasPassword: boolean;
+  onboarded: boolean;
+}
+
+const onboardingPath = "/dashboard/onboarding";
+
 export function App() {
-  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [auth, setAuth] = useState<AuthState | null>(null);
+  const refresh = () => void api<AuthState>("/auth").then(setAuth);
   useEffect(() => {
-    void api<{ authenticated: boolean }>("/auth").then((auth) => setAuthenticated(auth.authenticated));
-    return onLoggedOut(() => setAuthenticated(false));
+    refresh();
+    return onLoggedOut(refresh);
   }, []);
+
+  // A fresh bridge, or a logged in one that never finished onboarding, goes there. Once finished, onboarding goes to the dashboard.
+  const screen = !auth ? null : !auth.hasPassword || (auth.authenticated && !auth.onboarded) ? "onboarding" : auth.authenticated ? "dashboard" : "login";
+  useEffect(() => {
+    // The setup code rides in the fragment, so moving to onboarding keeps it.
+    if (screen === "onboarding" && location.pathname !== onboardingPath) history.replaceState(null, "", `${onboardingPath}${location.hash}`);
+    if (screen === "dashboard" && location.pathname === onboardingPath) history.replaceState(null, "", "/dashboard");
+  }, [screen]);
+
   return (
     <TooltipProvider delayDuration={300}>
-      {authenticated === true && <Dashboard onLoggedOut={() => setAuthenticated(false)} />}
-      {authenticated === false && <Login onLoggedIn={() => setAuthenticated(true)} />}
+      {auth && screen === "onboarding" && <Onboarding hasPassword={auth.hasPassword} onChanged={refresh} />}
+      {screen === "dashboard" && <Dashboard onLoggedOut={refresh} />}
+      {screen === "login" && <Login onLoggedIn={refresh} />}
       <Toaster position="bottom-right" />
     </TooltipProvider>
   );
 }
+
+// Loopback traffic never leaves the machine, so plain HTTP is only a concern from other addresses.
+const unencrypted = location.protocol === "http:" && !/^(localhost|127(\.\d+){3}|\[::1\])$/.test(location.hostname);
 
 function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
   const [key, setKey] = useState("");
@@ -76,6 +103,7 @@ function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
           <Button type="submit" size="lg" className="h-10" disabled={action.busy || !key}>
             Log in
           </Button>
+          {unencrypted && <p className="text-center text-sm text-muted-foreground">This connection is not encrypted. Turn on Tailscale HTTPS in Settings.</p>}
         </FieldGroup>
       </form>
     </main>
@@ -114,6 +142,8 @@ function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
         <main className="relative mx-2 min-h-0 flex-1 overflow-hidden rounded-xl border bg-background sm:mr-3 sm:mb-3 sm:ml-0">
           {overview && view === "canvas" && <Canvas overview={overview} traffic={traffic} onPair={() => go("devices")} />}
           {overview && view === "logs" && <Logs overview={overview} traffic={traffic} />}
+          {overview && view === "costs" && <Costs overview={overview} />}
+          {overview && view === "analytics" && <Analytics overview={overview} />}
           {overview && view === "setup" && <Setup overview={overview} />}
           {overview && view === "skills" && <Skills overview={overview} />}
           {overview && view === "devices" && <Devices overview={overview} />}

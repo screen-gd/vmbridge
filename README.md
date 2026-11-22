@@ -35,10 +35,10 @@ Run the same command again to update.
 
 ## Get started
 
-1. Run `vmbridge` and choose a dashboard password.
-2. Open `/dashboard` on one of the addresses it prints, and log in.
-3. Under **Setup**, add a provider, connect GitHub and sign in your agents.
-4. Under **Devices**, create a pairing link and paste it into T3 Code as a remote environment.
+1. Run `vmbridge` and open one of the setup links it prints.
+2. Choose a dashboard password, add a provider, sign in your agents and choose whether to bring your
+   skills and instructions. GitHub is under **Setup** in the dashboard.
+3. Under **Devices**, create a pairing link and paste it into T3 Code as a remote environment.
 
 Start a thread in T3 Code and VM Bridge brings up a VM for it.
 
@@ -104,7 +104,7 @@ vmbridge password                               Set a new dashboard password
 ```
 
 Your data lives in `~/.vmbridge`. Set `VMBRIDGE_HOME` to keep it somewhere else. On a machine with
-no terminal, set `VMBRIDGE_PASSWORD` for the first start.
+no terminal, set `VMBRIDGE_PASSWORD` for the first start, or run `vmbridge password`.
 
 Sizes, sleep behaviour and notes for each provider: [docs/PROVIDERS.md](docs/PROVIDERS.md).
 

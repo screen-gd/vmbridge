@@ -149,7 +149,7 @@ export default function Docs() {
               </p>
               <Block>{install}</Block>
               <p>
-                Then run <Code>vmbridge</Code>. It asks for a dashboard password on first run. Run the same command again to update.
+                Then run <Code>vmbridge</Code> and open the setup link it prints. Run the same command again to update.
               </p>
               <p>To build from source instead, with Bun 1.4.4 or newer:</p>
               <Block>{`git clone https://github.com/vkpdeveloper/vmbridge
@@ -170,8 +170,9 @@ bun run build          # dist/vmbridge
                 ])}
               />
               <p>
-                On first start, VM Bridge asks for a <strong>dashboard password</strong> of at least 8 characters. On a machine with no terminal, set{" "}
-                <Code>VMBRIDGE_PASSWORD</Code> for the first start instead.
+                On first start, VM Bridge prints a one-time setup link for each address. It opens onboarding, where you choose a{" "}
+                <strong>dashboard password</strong> of at least 8 characters. On a machine with no terminal, set <Code>VMBRIDGE_PASSWORD</Code> for the
+                first start, or run <Code>vmbridge password</Code>.
               </p>
               <p>
                 Data lives in <Code>~/.vmbridge</Code>. Set <Code>VMBRIDGE_HOME</Code> to move it. The background service uses launchd on macOS and

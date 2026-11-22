@@ -11,7 +11,7 @@ interface BoatEnvironment {
   isDefault: boolean;
 }
 
-interface BoatNamedSnapshot {
+interface BoatSavedSnapshot {
   status: "saving" | "ready" | "failed";
   error?: string;
 }
@@ -88,9 +88,9 @@ export const boatProvider: ProviderDefinition = {
 
     const connect = (sandboxId: string): Promise<Box> => connectSandbox(provider, sandboxId, { recoverSecrets: false });
 
-    async function deleteNamed(name: string) {
+    async function deleteSaved(name: string) {
       try {
-        await api.request("DELETE", "/named-snapshots/{name}", { params: { name } });
+        await api.request("DELETE", "/saved-snapshots/{name}", { params: { name } });
       } catch (error) {
         if (!notFound(error)) throw error;
       }
@@ -112,7 +112,7 @@ export const boatProvider: ProviderDefinition = {
       },
 
       // The SDK creates Boat VMs with `noEnv: true`, which drops the environment, so VM Bridge
-      // creates them through Boat's API and attaches with the SDK. A VM from a named snapshot gets the
+      // creates them through Boat's API and attaches with the SDK. A VM from a saved snapshot gets the
       // snapshot's machine type, and `noEnv: false` keeps it from inheriting the snapshot VM's environment choice.
       async create(input, from) {
         const environment = config.values.environment || undefined;
@@ -141,27 +141,28 @@ export const boatProvider: ProviderDefinition = {
 
       connect,
 
-      // The SDK has no Boat snapshots. Boat keeps named snapshots until deleted, at most 10 per account.
+      // The SDK has no Boat snapshots. Boat keeps saved snapshots until deleted. A plan includes at least 10; past that each
+      // one is billed to the wallet, and a save with an empty wallet fails with credit_required.
       async snapshot(box) {
         const name = `vmbridge-base-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
         try {
           // Inside the try: Boat may save the snapshot even when this request times out.
-          await api.request("POST", "/named-snapshots", { body: { sandboxId: box.id, name }, timeoutMs: 90_000 });
+          await api.request("POST", "/saved-snapshots", { body: { sandboxId: box.id, name }, timeoutMs: 90_000 });
           const deadline = Date.now() + 10 * 60_000;
           while (Date.now() < deadline) {
-            const { snapshot } = await api.request<{ snapshot: BoatNamedSnapshot }>("GET", "/named-snapshots/{name}", { params: { name } });
+            const { snapshot } = await api.request<{ snapshot: BoatSavedSnapshot }>("GET", "/saved-snapshots/{name}", { params: { name } });
             if (snapshot.status === "ready") return name;
             if (snapshot.status === "failed") throw new Error(`Boat could not save the snapshot: ${snapshot.error ?? "no reason given"}.`);
             await Bun.sleep(2000);
           }
           throw new Error("Boat did not finish the snapshot within 10 minutes.");
         } catch (error) {
-          await deleteNamed(name).catch(() => undefined);
+          await deleteSaved(name).catch(() => undefined);
           throw error;
         }
       },
 
-      deleteCheckpoint: deleteNamed,
+      deleteCheckpoint: deleteSaved,
 
       async states(labels) {
         const states = await base.states(labels);
