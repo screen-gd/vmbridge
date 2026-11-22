@@ -6,7 +6,7 @@ import { DocsNav, type DocsSection } from "@/components/DocsNav";
 import { Topology } from "@/components/Topology";
 import { commands, install, providers } from "@/lib/data";
 import { openGraph } from "@/lib/site";
-import { frame } from "@/lib/styles";
+import { rails } from "@/lib/styles";
 
 const title = "VM Bridge docs: install, providers, sleep and wake";
 const description =
@@ -110,7 +110,7 @@ export default function Docs() {
   return (
     <>
       <Nav />
-      <div className={`${frame} flex gap-12`}>
+      <div className={`${rails} flex gap-12`}>
         <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-52 shrink-0 overflow-y-auto py-10 lg:block">
           <DocsNav sections={sections} />
         </aside>

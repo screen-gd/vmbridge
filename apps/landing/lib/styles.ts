@@ -1,8 +1,20 @@
-/** The page container: centred, nearly the full width of a desktop screen. */
-export const container = "mx-auto w-full max-w-[1680px] px-6 sm:px-10 lg:px-16";
+/** The page container: centred, inset 16px from the viewport edge from sm up. */
+export const container = "mx-auto w-full sm:w-[calc(100%-2rem)] max-w-[1648px] px-6 lg:px-12";
 
 /** Alias of `container` kept for the chrome wrappers; there is no ruled frame anymore. */
 export const frame = container;
+
+/** The frame plus the two vertical hairlines bounding the page, drawn from sm up. */
+export const rails = `${container} sm:border-x sm:border-white/10`;
+
+/**
+ * The frame's width and rails without its padding: children carry the horizontal
+ * padding themselves so the hairline dividers between them span rail to rail.
+ */
+export const railShell = "mx-auto w-full sm:w-[calc(100%-2rem)] max-w-[1648px] sm:border-x sm:border-white/10";
+
+/** The frame's horizontal padding on its own, for children of `railShell`. */
+export const innerPad = "px-6 lg:px-12";
 
 /** The two button looks: flat mono pills, colour changes only. */
 export const primaryButton =

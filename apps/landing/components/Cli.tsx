@@ -1,30 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { copy } from "@/lib/copy";
-import { cliScripts, commands } from "@/lib/data";
+import { commands } from "@/lib/data";
+import { LiveTerminal } from "./LiveTerminal";
 import { PillTabs } from "./PillTabs";
 import { Section } from "./Section";
-import { TerminalBody } from "./TerminalWindow";
 import { Panel } from "./Window";
-
-const rows = Math.max(...cliScripts.map((script) => script.length));
 
 const pillItems = commands.map((c) => ({
   id: c.command,
   label: c.command,
-  detail: (
-    <>
-      <span className="block text-[15px] leading-relaxed font-normal text-muted-foreground">{c.does}</span>
-      {c.args ? <span className="mt-1 block font-mono text-[13px] text-faint">{c.args}</span> : null}
-    </>
-  ),
+  detail: <span className="mt-1 block text-[14px] leading-snug font-normal text-muted-foreground">{c.does}</span>,
 }));
 
-/** The vmbridge command reference: pick a command, its real output plays beside the list. */
+/**
+ * The vmbridge command reference: a static list of the five commands on the left and
+ * one fixed-height live terminal on the right. Picking a row runs that command in the
+ * terminal; typing a known command there marks its row active. Nothing expands, so the
+ * section height never changes between selections.
+ */
 export function Cli() {
-  const [selected, setSelected] = useState(0);
-  const command = commands[selected];
+  const [selected, setSelected] = useState(commands[0].command);
+  const runRef = useRef<((command: string) => void) | null>(null);
   return (
     <Section
       id="cli"
@@ -32,27 +30,21 @@ export function Cli() {
       body={copy.cli.body}
       splitAt="lg"
       side={
-        <>
-          <PillTabs
-            label={copy.cli.title}
-            orientation="vertical"
-            verticalAt="lg"
-            wrap
-            items={pillItems}
-            active={command.command}
-            onChange={(id) => setSelected(Math.max(0, commands.findIndex((c) => c.command === id)))}
-            itemClassName="rounded-lg px-4 py-3"
-            indicatorClassName="rounded-lg bg-card"
-          />
-          <div className="mt-3 text-[15px] leading-relaxed text-muted-foreground lg:hidden">
-            {command.does}
-            {command.args ? <span className="ml-3 font-mono text-[13px] text-faint">{command.args}</span> : null}
-          </div>
-        </>
+        <PillTabs
+          label={copy.cli.title}
+          orientation="vertical"
+          verticalAt="always"
+          showAllDetail
+          items={pillItems}
+          active={selected}
+          onChange={(id) => runRef.current?.(id)}
+          itemClassName="rounded-lg px-4 py-2.5 short:py-1.5"
+          indicatorClassName="rounded-lg bg-card"
+        />
       }
     >
-      <Panel label="zsh">
-        <TerminalBody script={cliScripts[selected]} rows={rows} />
+      <Panel label="zsh" aside={<span>{copy.terminal.hint}</span>}>
+        <LiveTerminal onCommand={setSelected} runRef={runRef} />
       </Panel>
     </Section>
   );

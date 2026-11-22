@@ -19,7 +19,7 @@ export function FaqItem({ number, question, defaultOpen = false, children }: { n
           aria-expanded={open}
           aria-controls={`${id}-a`}
           onClick={() => setOpen((value) => !value)}
-          className="group flex w-full items-start gap-4 rounded-md py-5 text-left focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary sm:gap-6"
+          className="group flex w-full items-start gap-4 rounded-md py-2.5 text-left focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary sm:gap-6"
         >
           <span className={`w-6 shrink-0 pt-0.5 font-mono text-[13px] leading-6 transition-colors ${open ? "text-primary" : "text-faint"}`}>
             {String(number).padStart(2, "0")}

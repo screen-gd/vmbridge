@@ -2,8 +2,8 @@ import { Line, RoundedBox } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QuadraticBezierCurve3, Vector3, type Group, type Mesh, type MeshStandardMaterial } from "three";
-import { providers } from "@/lib/data";
 import { useInView, useReducedMotion } from "@/lib/hooks";
+import { useSiteState } from "./SiteState";
 
 export type VmState = "online" | "asleep" | "waking";
 
@@ -23,9 +23,7 @@ const devices = [new Vector3(-3.55, 0.25, 0), new Vector3(-3.05, -1.25, 0.6)];
 const curve = (from: Vector3, to: Vector3, lift = 0.5) =>
   new QuadraticBezierCurve3(from, new Vector3((from.x + to.x) / 2, (from.y + to.y) / 2 + lift, (from.z + to.z) / 2), to);
 
-const colorOf = (providerId: string) => providers.find((p) => p.id === providerId)?.color ?? "#8b5cf6";
-
-/** Small spheres riding a curve. Requests go out in violet, replies come back in green. */
+/** Small spheres riding a curve. Requests go out in violet, replies come back in white. */
 function Packets({ path, count, color, reverse = false, speed = 0.32 }: { path: QuadraticBezierCurve3; count: number; color: string; reverse?: boolean; speed?: number }) {
   const refs = useRef<(Mesh | null)[]>([]);
   useFrame(({ clock }) => {
@@ -134,7 +132,6 @@ function Vm({ vm, y, onToggle }: { vm: SceneVm; y: number; onToggle: () => void 
   const group = useRef<Group>(null);
   const led = useRef<MeshStandardMaterial>(null);
   const [hovered, setHovered] = useState(false);
-  const color = colorOf(vm.providerId);
   const asleep = vm.state === "asleep";
 
   useFrame(({ clock }, delta) => {
@@ -170,10 +167,10 @@ function Vm({ vm, y, onToggle }: { vm: SceneVm; y: number; onToggle: () => void 
       <RoundedBox args={[1.5, 0.92, 0.92]} radius={0.1}>
         <meshStandardMaterial color={asleep ? "#0c0c0c" : "#18181b"} metalness={0.5} roughness={0.4} />
       </RoundedBox>
-      {/* Provider color strip on the front face. */}
+      {/* Violet strip on the front face. */}
       <mesh position={[-0.15, 0.18, 0.465]}>
         <planeGeometry args={[0.9, 0.08]} />
-        <meshBasicMaterial color={color} transparent opacity={asleep ? 0.15 : 1} toneMapped={false} />
+        <meshBasicMaterial color="#8b5cf6" transparent opacity={asleep ? 0.15 : 1} toneMapped={false} />
       </mesh>
       {[-0.02, -0.16].map((rowY) => (
         <mesh key={rowY} position={[-0.15, rowY, 0.465]}>
@@ -185,8 +182,8 @@ function Vm({ vm, y, onToggle }: { vm: SceneVm; y: number; onToggle: () => void 
         <sphereGeometry args={[0.055, 16, 16]} />
         <meshStandardMaterial
           ref={led}
-          color={vm.state === "online" ? "#3ecf8e" : vm.state === "waking" ? "#f5b74e" : "#3f3f46"}
-          emissive={vm.state === "online" ? "#3ecf8e" : vm.state === "waking" ? "#f5b74e" : "#000"}
+          color={vm.state === "online" ? "#8b5cf6" : vm.state === "waking" ? "#a78bfa" : "#3f3f46"}
+          emissive={vm.state === "online" ? "#8b5cf6" : vm.state === "waking" ? "#a78bfa" : "#000"}
           toneMapped={false}
         />
       </mesh>
@@ -198,9 +195,11 @@ function Rig({ children, narrow }: { children: React.ReactNode; narrow: boolean 
   const group = useRef<Group>(null);
   const { camera, size } = useThree();
   useEffect(() => {
-    // Fit the full scene (about 11.5 units wide) at any aspect ratio.
+    // Fit the camera so the scene (~9 units wide) nearly fills the canvas width
+    // at any aspect (visible width = 0.728 * distance * aspect); K leaves a
+    // small margin so the right-hand VM panels clear the canvas edge.
     const aspect = size.width / size.height;
-    camera.position.set(0, narrow ? 0.4 : 0.9, Math.max(7.2, 11.6 / (0.728 * aspect)));
+    camera.position.set(0, narrow ? 0.4 : 0.9, Math.max(14.6 / aspect, 5.3));
     camera.lookAt(0, 0, 0);
   }, [camera, size, narrow]);
   useFrame(({ pointer }, delta) => {
@@ -220,7 +219,8 @@ export function BridgeScene({ vms, onToggle, narrow }: { vms: SceneVm[]; onToggl
   const wrapper = useRef<HTMLDivElement>(null);
   const inView = useInView(wrapper);
   const reduced = useReducedMotion();
-  const animate = inView && !reduced;
+  const { phase } = useSiteState();
+  const animate = inView && !reduced && phase !== "asleep";
 
   const deviceCurves = useMemo(() => devices.map((d) => curve(new Vector3(d.x + 0.6, d.y, d.z), bridgeLeft, 0.35)), []);
   const vmCurves = useMemo(() => vmRows.map((y) => curve(bridgeRight, new Vector3(vmX - 0.8, y, 0), 0.25)), []);
@@ -265,7 +265,7 @@ export function BridgeScene({ vms, onToggle, narrow }: { vms: SceneVm[]; onToggl
                 {animate && live ? (
                   <>
                     <Packets path={path} count={2} color="#a78bfa" speed={0.42} />
-                    <Packets path={path} count={2} color="#3ecf8e" reverse speed={0.36} />
+                    <Packets path={path} count={2} color="#f5f5f5" reverse speed={0.36} />
                   </>
                 ) : null}
                 <Vm vm={vm} y={vmRows[i]} onToggle={() => onToggle(vm.id)} />

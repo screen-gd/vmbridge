@@ -120,29 +120,12 @@ export const copy = {
     },
   },
 
-  /** The providers with measured timings: a ring, then the wake race as the provider list. */
+  /** The eight providers on a ring around the bridge mark. */
   providers: {
     /** 40 */
     title: "Eight supported sandbox providers",
     /** 150 */
-    body: "Use your own accounts and API keys, and add several providers at once. Wake times depend on whether the provider pauses, stops, or checkpoints VMs.",
-    /** Column headings, 14 each. */
-    columns: { provider: "Provider", sleep: "Sleep", ready: "New VM", wake: "Wake", latency: "Round trip" },
-    /** 90. Shown under the table. */
-    note: "Measured on fresh VMs in live runs. Round trip is filesystem.browse. Boat is unmeasured.",
-    /** 16. Fills a cell with no measurement. */
-    unmeasured: "Not measured",
-    /** The wake-race panel under the provider grid. */
-    race: {
-      /** 12 */
-      label: "wake race",
-      /** 8 */
-      start: "Race",
-      /** 8 */
-      again: "Again",
-      /** 12 */
-      speed: "2x speed",
-    },
+    body: "Use your own accounts and API keys, and add several providers at once.",
   },
 
   /** Screenshots of the dashboard behind four tabs. */
@@ -160,7 +143,7 @@ export const copy = {
     },
   },
 
-  /** The command reference, as a table. */
+  /** The command reference: a static list beside one live terminal. */
   cli: {
     /** 40 */
     title: "Five commands",
@@ -197,7 +180,7 @@ export const copy = {
     hint: "type sleep in the terminal",
   },
 
-  /** The hero terminal's interactive parts. */
+  /** The live terminal's interactive parts. */
   terminal: {
     /** 12. Shown in the terminal strip once it can be typed in. */
     hint: "try: help",
@@ -207,8 +190,6 @@ export const copy = {
     sleeping: "putting the page to sleep",
     /** 10 */
     awake: "awake",
-    /** 30 */
-    racing: "racing the providers",
     /** 40. {cmd} is the unknown first word. */
     notFound: "zsh: command not found: {cmd}",
     /** Command help lines: the command, then a two-to-four word description. */
@@ -221,7 +202,6 @@ export const copy = {
       ["help", "list commands"],
       ["sleep", "put page to sleep"],
       ["wake", "wake the page"],
-      ["race", "race the providers"],
       ["clear", "clear the terminal"],
     ],
   },
@@ -229,5 +209,24 @@ export const copy = {
   footer: {
     /** 60 */
     line: "VM Bridge runs T3 Code agents on cloud VMs.",
+    /** 20. Before " · v{site.version}". */
+    license: "MIT license",
+    /** The two link-column labels. */
+    site: "Site",
+    project: "Project",
+    /** Link texts in the two columns. */
+    links: {
+      setup: "Setup",
+      sleepWake: "Sleep and wake",
+      providers: "Providers",
+      dashboard: "Dashboard",
+      commands: "Commands",
+      faq: "FAQ",
+      docs: "Docs",
+      install: "Install",
+      github: "GitHub",
+      releases: "Releases",
+      license: "License",
+    },
   },
 } as const;

@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useReducedMotion } from "@/lib/hooks";
-import { frame } from "@/lib/styles";
+import { railShell } from "@/lib/styles";
 
 type SitePhase = "awake" | "idle" | "asleep" | "waking";
 
@@ -113,12 +113,16 @@ export function SiteStateProvider({ children }: { children: React.ReactNode }) {
   return <SiteStateContext.Provider value={{ phase, countdown, sleep, wake }}>{children}</SiteStateContext.Provider>;
 }
 
-/** <main> wrapper that dims the page's content while the site is asleep; the dim applies to an inner wrapper. */
+/**
+ * <main> wrapper that dims the page's content while the site is asleep; the dim applies
+ * to an inner wrapper. `railShell` draws the two page rails without padding so the
+ * `divide-y` hairlines between sections span rail to rail; each section pads itself.
+ */
 export function LandingMain({ children }: { children: React.ReactNode }) {
   const { phase } = useSiteState();
   return (
-    <main className={frame}>
-      <div className={`transition-opacity ${phase === "asleep" ? "opacity-60 duration-700" : "duration-300"}`}>{children}</div>
+    <main className={railShell}>
+      <div className={`divide-y divide-white/10 transition-opacity ${phase === "asleep" ? "opacity-60 duration-700" : "duration-300"}`}>{children}</div>
     </main>
   );
 }
