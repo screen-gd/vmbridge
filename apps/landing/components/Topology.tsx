@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { copy } from "@/lib/copy";
 import { providers, type Provider, type ProviderId } from "@/lib/data";
-import { useInView, useMedia, useReducedMotion } from "@/lib/hooks";
+import { useInView, useReducedMotion } from "@/lib/hooks";
 import { Logo, ProviderLogo, T3Logo } from "./brand";
 import { useSiteState } from "./SiteState";
 import { Panel } from "./Window";
@@ -28,7 +28,11 @@ const providerOf = (id: ProviderId): Provider => providers.find((p) => p.id === 
 
 type Point = readonly [number, number];
 
-/** Node centers in SVG units. Wide lays out left to right, narrow top to bottom. */
+/**
+ * Node centers in SVG units. Wide lays out left to right; narrow stacks the nodes and
+ * routes a vertical trunk down the left of the VM cards (`trunkX`) with a short
+ * horizontal branch into each card's left edge (`cardX`).
+ */
 const layouts = {
   wide: {
     w: 1000,
@@ -39,13 +43,22 @@ const layouts = {
   },
   narrow: {
     w: 1000,
-    h: 1400,
+    h: 1520,
     devices: { mac: [270, 110], phone: [730, 110] },
     bridge: [500, 500],
-    vms: { a: [500, 850], b: [500, 1070], c: [500, 1290] },
+    trunkX: 120,
+    cardX: 240,
+    vmY: { a: 960, b: 1170, c: 1380 },
   },
 } as const;
 type Layout = (typeof layouts)[keyof typeof layouts];
+
+/** Narrow VM wire: bridge bottom, an arc left onto the trunk, down it, then the branch. */
+const trunkWire = (id: Vm["id"], y: number) => {
+  const i = { a: 0, b: 1, c: 2 }[id];
+  const n = layouts.narrow;
+  return `M500 580 C280 580 ${n.trunkX} 610 ${n.trunkX} ${640 + i * 28} L${n.trunkX} ${y} L${n.cardX} ${y}`;
+};
 
 function wire(from: Point, to: Point, wide: boolean) {
   const [x1, y1] = from;
@@ -183,8 +196,6 @@ export function Topology({ stacked = false, log = true }: { stacked?: boolean; l
   const reduced = useReducedMotion();
   const { phase } = useSiteState();
   const packets = useInView(panel) && !reduced && phase !== "asleep";
-  const narrow = useMedia("(max-width: 767px)");
-  const layout = narrow ? layouts.narrow : layouts.wide;
   const shown = stacked ? rows.slice(-3) : rows.slice(-8);
 
   const pushRow = (project: string, state: string, detail: string) =>
@@ -213,44 +224,80 @@ export function Topology({ stacked = false, log = true }: { stacked?: boolean; l
   return (
     <div ref={panel} id="topology" className={`grid grid-cols-[minmax(0,1fr)] ${stacked || !log ? "" : "lg:grid-cols-[minmax(0,1fr)_26rem]"}`}>
       <div>
-        <div className={`relative ${narrow ? "" : "h-[30rem]"}`} style={narrow ? { aspectRatio: `${layout.w} / ${layout.h}` } : undefined}>
-        {!narrow ? (
-          <>
-            <span className="absolute top-3 left-[14%] -translate-x-1/2 font-mono text-[13px] text-faint">{copy.diagram.devices}</span>
-            <span className="absolute top-3 left-[50%] -translate-x-1/2 font-mono text-[13px] text-faint">{copy.diagram.bridge}</span>
-            <span className="absolute top-3 left-[84%] -translate-x-1/2 font-mono text-[13px] text-faint">{copy.diagram.vms}</span>
-          </>
-        ) : null}
-        <svg viewBox={`0 0 ${layout.w} ${layout.h}`} preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
-          <Wire d={wire(layout.devices.mac, layout.bridge, !narrow)} kind="active" packets={packets} />
-          <Wire d={wire(layout.devices.phone, layout.bridge, !narrow)} kind="active" packets={packets} />
-          {vms.map((vm) => (
-            <Wire
-              key={vm.id}
-              d={wire(layout.bridge, layout.vms[vm.id], !narrow)}
-              kind={vm.state === "online" ? "active" : vm.state}
-              packets={packets}
-            />
-          ))}
-        </svg>
+        {/* Both layouts render in the initial HTML; CSS picks one per viewport so
+            phones never receive the desktop coordinates, even with JS disabled.
+            `hidden` also keeps the other copy's buttons out of the a11y tree. */}
+        <div className="relative md:hidden" style={{ aspectRatio: `${layouts.narrow.w} / ${layouts.narrow.h}` }}>
+          <svg viewBox={`0 0 ${layouts.narrow.w} ${layouts.narrow.h}`} preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
+            <Wire d={wire(layouts.narrow.devices.mac, layouts.narrow.bridge, false)} kind="active" packets={packets} />
+            <Wire d={wire(layouts.narrow.devices.phone, layouts.narrow.bridge, false)} kind="active" packets={packets} />
+            {[...vms].reverse().map((vm) => (
+              <Wire
+                key={vm.id}
+                d={trunkWire(vm.id, layouts.narrow.vmY[vm.id])}
+                kind={vm.state === "online" ? "active" : vm.state}
+                packets={packets}
+              />
+            ))}
+          </svg>
 
-        <At point={layout.devices.mac} layout={layout}>
-          <Device name="MacBook" />
-        </At>
-        <At point={layout.devices.phone} layout={layout}>
-          <Device name="iPhone" />
-        </At>
-        <At point={layout.bridge} layout={layout}>
-          <div className="flex flex-col items-center gap-1.5">
-            <Logo className="size-12" />
-            <span className="font-mono text-[13px] text-faint">:3774</span>
-          </div>
-        </At>
-        {vms.map((vm) => (
-          <At key={vm.id} point={layout.vms[vm.id]} layout={layout}>
-            <VmNode vm={vm} provider={providerOf(vm.providerId)} narrow={narrow} onToggle={() => toggle(vm.id)} />
+          <At point={layouts.narrow.devices.mac} layout={layouts.narrow}>
+            <Device name="MacBook" />
           </At>
-        ))}
+          <At point={layouts.narrow.devices.phone} layout={layouts.narrow}>
+            <Device name="iPhone" />
+          </At>
+          <At point={layouts.narrow.bridge} layout={layouts.narrow}>
+            <div className="flex flex-col items-center gap-1.5">
+              <Logo className="size-12" />
+              <span className="rounded bg-background px-1 font-mono text-[13px] text-faint">:3774</span>
+            </div>
+          </At>
+          {vms.map((vm) => (
+            <div
+              key={vm.id}
+              className="absolute -translate-y-1/2"
+              style={{ left: `${(layouts.narrow.cardX / layouts.narrow.w) * 100}%`, top: `${(layouts.narrow.vmY[vm.id] / layouts.narrow.h) * 100}%` }}
+            >
+              <VmNode vm={vm} provider={providerOf(vm.providerId)} narrow onToggle={() => toggle(vm.id)} />
+            </div>
+          ))}
+        </div>
+
+        <div className="relative hidden h-[24rem] md:block lg:h-[20rem] xl:h-[24rem] xl:short:h-[21rem]">
+          <span className="absolute top-3 left-[14%] -translate-x-1/2 font-mono text-[13px] text-faint">{copy.diagram.devices}</span>
+          <span className="absolute top-3 left-[50%] -translate-x-1/2 font-mono text-[13px] text-faint">{copy.diagram.bridge}</span>
+          <span className="absolute top-3 left-[84%] -translate-x-1/2 font-mono text-[13px] text-faint">{copy.diagram.vms}</span>
+          <svg viewBox={`0 0 ${layouts.wide.w} ${layouts.wide.h}`} preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
+            <Wire d={wire(layouts.wide.devices.mac, layouts.wide.bridge, true)} kind="active" packets={packets} />
+            <Wire d={wire(layouts.wide.devices.phone, layouts.wide.bridge, true)} kind="active" packets={packets} />
+            {vms.map((vm) => (
+              <Wire
+                key={vm.id}
+                d={wire(layouts.wide.bridge, layouts.wide.vms[vm.id], true)}
+                kind={vm.state === "online" ? "active" : vm.state}
+                packets={packets}
+              />
+            ))}
+          </svg>
+
+          <At point={layouts.wide.devices.mac} layout={layouts.wide}>
+            <Device name="MacBook" />
+          </At>
+          <At point={layouts.wide.devices.phone} layout={layouts.wide}>
+            <Device name="iPhone" />
+          </At>
+          <At point={layouts.wide.bridge} layout={layouts.wide}>
+            <div className="flex flex-col items-center gap-1.5">
+              <Logo className="size-12" />
+              <span className="rounded bg-background px-1 font-mono text-[13px] text-faint">:3774</span>
+            </div>
+          </At>
+          {vms.map((vm) => (
+            <At key={vm.id} point={layouts.wide.vms[vm.id]} layout={layouts.wide}>
+              <VmNode vm={vm} provider={providerOf(vm.providerId)} narrow={false} onToggle={() => toggle(vm.id)} />
+            </At>
+          ))}
         </div>
       </div>
 

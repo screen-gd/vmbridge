@@ -16,7 +16,8 @@ function CountUp({ text, className = "" }: { text: string; className?: string })
   const inView = useInView(ref);
   const reduced = useReducedMotion();
   const [go, setGo] = useState(false);
-  const [progress, setProgress] = useState(0);
+  // `null` shows the final text until the count starts, so the figure is correct without JS.
+  const [progress, setProgress] = useState<number | null>(null);
 
   // `go` latches, so the count always finishes even if the figure scrolls back out of view.
   useEffect(() => {
@@ -36,7 +37,8 @@ function CountUp({ text, className = "" }: { text: string; className?: string })
     return () => cancelAnimationFrame(raf);
   }, [go]);
 
-  const shown = reduced || progress >= 1 ? text : text.replace(/\d+/g, (n) => String(Math.round(Number(n) * progress)));
+  const shown =
+    progress === null || progress >= 1 || reduced ? text : text.replace(/\d+/g, (n) => String(Math.round(Number(n) * progress)));
   return (
     <span ref={ref} className={`tabular-nums ${className}`}>
       {shown}
@@ -44,40 +46,42 @@ function CountUp({ text, className = "" }: { text: string; className?: string })
   );
 }
 
-/** The wiring diagram on top, then the two latency figures with the calls they answer. */
+/** The wiring diagram on the right, the two latency figures stacked in the left column. */
 export function Routing() {
   return (
     <Section
       id="routing"
       title={copy.routing.title}
       body={copy.routing.body}
-      aside={<span className="font-mono text-[13px] text-muted-foreground">{copy.hero.hint}</span>}
+      side={
+        <div className="grid gap-8 lg:grid-cols-2 xl:grid-cols-1 xl:short:gap-4">
+          <div>
+            <div className="font-mono text-[2rem] leading-none tracking-tight">
+              <CountUp text={bridgeLatency} />
+            </div>
+            <p className="mt-2 text-base leading-relaxed text-muted-foreground">{copy.routing.notes.bridge}</p>
+            <div className="mt-2 font-mono text-[13px] leading-6 text-faint">
+              {callsOf("bridge").map((call) => (
+                <div key={call}>{call}</div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="font-mono text-[2rem] leading-none tracking-tight text-primary">
+              <CountUp text={vmLatency} />
+            </div>
+            <p className="mt-2 text-base leading-relaxed text-muted-foreground">{copy.routing.notes.vm}</p>
+            <div className="mt-2 font-mono text-[13px] leading-6 text-faint">
+              {callsOf("vm").map((call) => (
+                <div key={call}>{call}</div>
+              ))}
+            </div>
+          </div>
+        </div>
+      }
     >
       <Topology log={false} />
-      <div className="mt-12 grid grid-cols-[minmax(0,1fr)] gap-10 lg:grid-cols-2 lg:gap-16">
-        <div>
-          <div className="font-mono text-[2.75rem] leading-none tracking-tight">
-            <CountUp text={bridgeLatency} />
-          </div>
-          <p className="mt-5 text-base leading-relaxed text-muted-foreground">{copy.routing.notes.bridge}</p>
-          <div className="mt-5 font-mono text-[13px] leading-7 text-muted-foreground">
-            {callsOf("bridge").map((call) => (
-              <div key={call}>{call}</div>
-            ))}
-          </div>
-        </div>
-        <div>
-          <div className="font-mono text-[2.75rem] leading-none tracking-tight text-primary">
-            <CountUp text={vmLatency} />
-          </div>
-          <p className="mt-5 text-base leading-relaxed text-muted-foreground">{copy.routing.notes.vm}</p>
-          <div className="mt-5 font-mono text-[13px] leading-7 text-muted-foreground">
-            {callsOf("vm").map((call) => (
-              <div key={call}>{call}</div>
-            ))}
-          </div>
-        </div>
-      </div>
+      <div className="mt-4 hidden text-center font-mono text-[13px] text-muted-foreground [.js_&]:block">{copy.hero.hint}</div>
     </Section>
   );
 }

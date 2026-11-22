@@ -44,7 +44,7 @@ export function FaqItem({ number, question, defaultOpen = false, children }: { n
         className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out ${open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}
       >
         <div className="overflow-hidden">
-          <p className="pr-9 pb-6 pl-10 text-base leading-relaxed text-pretty text-muted-foreground [overflow-wrap:anywhere] sm:pr-11 sm:pl-12">{children}</p>
+          <p className="max-w-[68ch] pr-9 pb-6 pl-0 text-base leading-relaxed text-pretty text-muted-foreground [overflow-wrap:anywhere] sm:pr-11 sm:pl-12">{children}</p>
         </div>
       </div>
     </div>

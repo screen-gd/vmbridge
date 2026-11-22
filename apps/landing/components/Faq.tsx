@@ -16,11 +16,11 @@ function Text({ text }: { text: string }) {
   );
 }
 
-/** The questions from data.faq, each opening in place; the first starts open. */
+/** The questions from data.faq, each opening in place; the first starts open. The heading sticks while the long accordion scrolls. */
 export function Faq() {
   return (
-    <Section id="faq" title={copy.faq.title}>
-      <div className="max-w-[60rem]">
+    <Section id="faq" title={copy.faq.title} sticky>
+      <div>
         {faq.map(({ question, answer }, i) => (
           <FaqItem key={question} number={i + 1} question={question} defaultOpen={i === 0}>
             <Text text={answer} />

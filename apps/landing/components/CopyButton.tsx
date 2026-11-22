@@ -2,7 +2,8 @@
 
 import { Copy01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import { UrlText } from "./TerminalWindow";
 
 /** A small icon button that copies text; the copy and tick icons cross-fade on swap. */
 export function CopyButton({ text, className = "" }: { text: string; className?: string }) {
@@ -34,13 +35,46 @@ export function CopyButton({ text, className = "" }: { text: string; className?:
   );
 }
 
-/** A one-line shell command with a copy button. Grows to fit; the text scrolls sideways sooner than it clips. `className` styles the command text. */
+/**
+ * A shell command with a copy button, full width. The text wraps at spaces, and URLs
+ * inside it only after a `/` (UrlText), so it never scrolls sideways and never clips.
+ * A trailing "…/install.sh | sh" pipe stays one nowrap unit (a nbsp alone is not
+ * enough: `overflow-wrap:anywhere` still breaks beside it), so "| sh" can never
+ * orphan on its own line. One line keeps the old look: a 40px row with the text
+ * vertically centred. `className` styles the command text.
+ */
 export function Command({ text, className = "" }: { text: string; className?: string }) {
+  const tokens = text.split(" ");
+  let head = text;
+  let unit = "";
+  if (tokens.length >= 3 && tokens[tokens.length - 2] === "|") {
+    const url = tokens[tokens.length - 3];
+    const slash = url.lastIndexOf("/");
+    if (slash >= 0 && slash < url.length - 1) {
+      unit = `${url.slice(slash + 1)} ${tokens[tokens.length - 2]} ${tokens[tokens.length - 1]}`;
+      head = text.slice(0, -unit.length);
+    }
+  }
   return (
-    <div className="flex h-10 w-fit max-w-full items-center gap-3 rounded-md bg-card pr-1 pl-4 font-mono text-[13px]">
-      <span className="text-faint select-none">$</span>
-      <code className={`min-w-0 flex-1 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}>{text}</code>
-      <CopyButton text={text} />
+    // py-1 plus the code's my-1.5 lands a single line at exactly 40px with the text
+    // centred; wrapped lines grow the box and leave the button aligned to the top.
+    <div className="flex min-h-10 w-full max-w-full items-start gap-3 rounded-md bg-card py-1 pr-1 pl-4 font-mono text-[13px]">
+      <code data-command className={`my-1.5 min-w-0 flex-1 leading-5 whitespace-normal [overflow-wrap:anywhere] ${className}`}>
+        <span className="text-faint select-none">$ </span>
+        {head.split(" ").map((token, i) => (
+          <Fragment key={i}>
+            {i > 0 ? " " : null}
+            {/^https?:\/\//.test(token) ? <UrlText url={token} /> : token}
+          </Fragment>
+        ))}
+        {unit ? (
+          <>
+            <wbr />
+            <span className="whitespace-nowrap">{unit}</span>
+          </>
+        ) : null}
+      </code>
+      <CopyButton text={text} className="shrink-0" />
     </div>
   );
 }

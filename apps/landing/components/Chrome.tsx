@@ -14,6 +14,8 @@ const underline = "relative after:absolute after:-bottom-0.5 after:left-0 after:
 export function Nav() {
   return (
     <header className="sticky top-0 z-40 bg-background">
+      {/* A soft fade so scrolling content does not cut hard against the bar. */}
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-full h-5 bg-gradient-to-b from-background to-transparent" />
       <div className={`${frame} flex h-14 items-center gap-6`}>
         <Link href="/" className="flex items-center gap-2.5 font-medium">
           <Logo className="size-6" />

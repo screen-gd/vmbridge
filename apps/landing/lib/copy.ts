@@ -35,7 +35,7 @@ export const copy = {
     waking: "Waking",
   },
 
-  /** Four steps from install to a running project. Each step shows a real command or log line beside it. */
+  /** Four steps from install to a running project: number, title and body. */
   steps: {
     /** 40 */
     title: "Setup takes four steps",

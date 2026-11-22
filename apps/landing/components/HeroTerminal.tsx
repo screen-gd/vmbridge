@@ -5,6 +5,7 @@ import { copy } from "@/lib/copy";
 import { cliScripts, heroScript } from "@/lib/data";
 import { useInView, useReducedMotion } from "@/lib/hooks";
 import { useSiteState } from "./SiteState";
+import { labelWidth, TerminalLine, TerminalTranscript } from "./TerminalWindow";
 
 const cursor = (blink: boolean) => (
   <span
@@ -16,6 +17,9 @@ const cursor = (blink: boolean) => (
 const line = "min-h-5 sm:min-h-7";
 
 const RACE_EVENT = "vmbridge:race";
+
+/** Column width for `help` output so the descriptions align. */
+const helpWidth = Math.max(...copy.terminal.help.map(([cmd]) => cmd.length)) + 2;
 
 /**
  * The hero terminal: plays the startup script once when it scrolls into view, then the prompt
@@ -39,6 +43,7 @@ export function HeroTerminal() {
   const [history, setHistory] = useState<string[]>([]);
   const [hIndex, setHIndex] = useState(-1);
   const [value, setValue] = useState("");
+  const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
     if (reduced) {
@@ -73,10 +78,11 @@ export function HeroTerminal() {
     return () => timers.forEach(clearTimeout);
   }, [inView, reduced]);
 
-  // Only the visitor's own output scrolls; the startup playback leaves the top in view.
+  // Only the visitor's own output scrolls; the startup playback leaves the top in
+  // view, and `clear` scrolls back to the top of the transcript.
   useEffect(() => {
     const el = scroll.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el) el.scrollTop = lines.length ? el.scrollHeight : 0;
   }, [lines]);
 
   /** Run one typed command: echo it, print its output, or answer it. */
@@ -92,7 +98,7 @@ export function HeroTerminal() {
     if (script) {
       setLines((l) => [...l, echo, ...script.filter((t) => !t.startsWith("$ "))]);
     } else if (name === "help") {
-      setLines((l) => [...l, echo, ...copy.terminal.help.map(([cmd, does]) => `${cmd}  ${does}`)]);
+      setLines((l) => [...l, echo, ...copy.terminal.help.map(([cmd, does]) => `${cmd.padEnd(helpWidth)}${does}`)]);
     } else if (name === "sleep") {
       setLines((l) => [...l, echo, copy.terminal.sleeping]);
       sleep();
@@ -124,64 +130,79 @@ export function HeroTerminal() {
     setHIndex(at);
   };
 
+  // The widest label column in the whole transcript so address and help columns align.
+  const labels = labelWidth([...heroScript, ...lines]);
+
   return (
-    // Clicking anywhere in the terminal focuses the prompt input.
+    // Clicking anywhere in the terminal focuses the prompt input. Below sm the panel
+    // keeps a capped 22rem with scroll; from sm it grows with the transcript instead.
     <div
-      ref={scroll}
       onClick={() => inputRef.current?.focus()}
-      className="cursor-text overflow-y-auto px-5 py-6 font-mono text-[11px] leading-5 break-words whitespace-pre-wrap sm:py-8 sm:text-[12px] sm:leading-6 min-[1440px]:text-[13px]"
-      style={{ height: "30rem" }}
+      className="flex h-[22rem] cursor-text flex-col px-4 pt-5 pb-6 font-mono text-[11px] leading-5 sm:h-auto sm:pt-6 sm:pb-8 sm:text-[12px] sm:leading-6 min-[1440px]:text-[13px]"
     >
-      {heroScript.slice(0, visible).map((text, i) =>
-        text.startsWith("$ ") ? (
-          <div key={i} className={line}>
-            <span className="text-faint">$</span> {text.slice(2)}
-          </div>
-        ) : (
-          <div key={i} className={`${line} text-muted-foreground`}>
-            {text}
-          </div>
-        ),
-      )}
-      {!done && visible < heroScript.length && heroScript[visible].startsWith("$ ") ? (
-        <div className={line}>
-          <span className="text-faint">$</span> {heroScript[visible].slice(2, 2 + typed)}
-          {cursor(phase !== "asleep")}
+      {/* Output scrolls only vertically; lines wrap instead of clipping. The top fade
+          appears only once the area is actually scrolled. */}
+      <div
+        ref={scroll}
+        data-terminal-output
+        onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
+        className={`relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto sm:min-h-[14rem] sm:max-h-[30rem] sm:flex-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+          scrolled ? "[mask-image:linear-gradient(to_bottom,transparent,black_1.5rem)]" : ""
+        }`}
+      >
+        <noscript>
+          <TerminalTranscript script={heroScript} className={line} />
+        </noscript>
+        {/* The full transcript rendered invisibly reserves the final height from the
+            first paint, so the panel never grows while the script plays. */}
+        <div aria-hidden className="invisible [html:not(.js)_&]:hidden">
+          {heroScript.map((text, i) => (
+            <TerminalLine key={`s${i}`} text={text} labels={labels} className={line} />
+          ))}
         </div>
-      ) : null}
-      {lines.map((text, i) => (
-        <div key={`r${i}`} className={`${line} ${text.startsWith("$") ? "" : "text-muted-foreground"}`}>
-          {text}
+        <div className="absolute inset-x-0 top-0 [html:not(.js)_&]:hidden">
+          {heroScript.slice(0, visible).map((text, i) => (
+            <TerminalLine key={i} text={text} labels={labels} className={line} />
+          ))}
+          {!done && visible < heroScript.length && heroScript[visible].startsWith("$ ") ? (
+            <div className={line}>
+              <span className="text-faint">$</span> {heroScript[visible].slice(2, 2 + typed)}
+              {cursor(phase !== "asleep")}
+            </div>
+          ) : null}
+          {lines.map((text, i) => (
+            <TerminalLine key={`r${i}`} text={text} labels={labels} className={line} />
+          ))}
         </div>
-      ))}
-      {done ? (
-        <div className={`${line} flex items-baseline`}>
-          <span className="text-faint select-none">$&nbsp;</span>
-          <input
-            ref={inputRef}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                run(value);
-                setValue("");
-                setHIndex(-1);
-              } else if (e.key === "ArrowUp") {
-                e.preventDefault();
-                recall(-1);
-              } else if (e.key === "ArrowDown") {
-                e.preventDefault();
-                recall(1);
-              }
-            }}
-            aria-label={copy.terminal.label}
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            className="min-w-0 flex-1 border-0 bg-transparent p-0 font-[inherit] text-foreground caret-primary outline-none"
-          />
-        </div>
-      ) : null}
+      </div>
+      {/* The prompt row is always in the layout (invisible until playback finishes)
+          so its arrival does not grow the panel either. */}
+      <div className={`${line} flex items-baseline pt-1 ${done ? "" : "invisible"}`} aria-hidden={done ? undefined : true}>
+        <span className="text-faint select-none">$&nbsp;</span>
+        <input
+          ref={inputRef}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              run(value);
+              setValue("");
+              setHIndex(-1);
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              recall(-1);
+            } else if (e.key === "ArrowDown") {
+              e.preventDefault();
+              recall(1);
+            }
+          }}
+          aria-label={copy.terminal.label}
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          className="min-w-0 flex-1 border-0 bg-transparent p-0 font-[inherit] text-foreground caret-primary outline-none"
+        />
+      </div>
     </div>
   );
 }

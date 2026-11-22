@@ -23,7 +23,7 @@ interface Packet {
 }
 
 /** Packets sit in the background like requests being routed along the grid lines. */
-const packetCount = (w: number, h: number) => Math.min(14, Math.max(6, Math.round((w * h) / 160000)));
+const packetCount = (w: number, h: number) => Math.min(8, Math.max(6, Math.round((w * h) / 160000)));
 
 /** Spawn a packet just off one edge, moving along a random grid line. */
 function spawn(w: number, h: number): Packet {
@@ -78,9 +78,9 @@ function paintDots(w: number, h: number, dpr: number) {
   const ctx = field.getContext("2d");
   if (!ctx) return field;
   ctx.scale(dpr, dpr);
-  ctx.fillStyle = "rgb(255 255 255 / 0.05)";
-  for (let y = GRID / 2; y < h; y += GRID) {
-    for (let x = GRID / 2; x < w; x += GRID) {
+  ctx.fillStyle = "rgb(255 255 255 / 0.08)";
+  for (let y = 0; y < h; y += GRID) {
+    for (let x = 0; x < w; x += GRID) {
       ctx.beginPath();
       ctx.arc(x, y, DOT_RADIUS, 0, Math.PI * 2);
       ctx.fill();
@@ -101,6 +101,11 @@ export function Backdrop() {
   const { phase } = useSiteState();
   const asleep = useRef(phase === "asleep");
   asleep.current = phase === "asleep";
+  /** Restarts the rAF loop when the page wakes, without rebuilding the whole effect. */
+  const startLoop = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (phase !== "asleep") startLoop.current?.();
+  }, [phase]);
 
   useEffect(() => {
     const el = canvas.current;
@@ -186,15 +191,21 @@ export function Backdrop() {
         ctx.fill();
       }
       ctx.globalAlpha = 1;
+      // Fully asleep: the frame just drawn is the last one until the page wakes.
+      if (asleep.current && energy.current < 0.01) {
+        running = false;
+        return;
+      }
       raf = requestAnimationFrame(tick);
     };
 
     const start = () => {
-      if (running) return;
+      if (running || document.hidden) return;
       running = true;
       last = performance.now();
       raf = requestAnimationFrame(tick);
     };
+    startLoop.current = start;
     const stop = () => {
       running = false;
       cancelAnimationFrame(raf);
@@ -205,6 +216,7 @@ export function Backdrop() {
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       stop();
+      startLoop.current = null;
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("resize", onResize);
       if (resizeTimer) clearTimeout(resizeTimer);

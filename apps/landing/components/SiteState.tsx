@@ -38,6 +38,7 @@ export function SiteStateProvider({ children }: { children: React.ReactNode }) {
   phaseRef.current = phase;
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const ignoreUntil = useRef(0);
+  const lastInput = useRef(Date.now());
 
   const clearTimers = () => {
     timers.current.forEach(clearTimeout);
@@ -59,13 +60,23 @@ export function SiteStateProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => () => clearTimers(), []);
 
   // The automatic clock: 20 s of quiet starts the countdown, 5 s of idle ends in asleep.
+  // The awake timeout re-arms itself from `lastInput`, so activity keeps the page awake
+  // instead of racing a deadline fixed at the last phase change.
   useEffect(() => {
     if (reduced) return;
     if (phase === "awake") {
-      const timer = setTimeout(() => {
-        setPhase("idle");
-        setCountdown(IDLE_SECONDS);
-      }, AWAKE_AFTER_MS);
+      let timer: ReturnType<typeof setTimeout>;
+      const arm = () => {
+        timer = setTimeout(() => {
+          if (Date.now() - lastInput.current >= AWAKE_AFTER_MS) {
+            setPhase("idle");
+            setCountdown(IDLE_SECONDS);
+          } else {
+            arm();
+          }
+        }, Math.max(0, lastInput.current + AWAKE_AFTER_MS - Date.now()));
+      };
+      arm();
       return () => clearTimeout(timer);
     }
     if (phase === "idle") {
@@ -86,6 +97,7 @@ export function SiteStateProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const onInput = () => {
       if (Date.now() < ignoreUntil.current) return;
+      lastInput.current = Date.now();
       if (phaseRef.current === "asleep") {
         wake();
         return;
@@ -106,7 +118,7 @@ export function LandingMain({ children }: { children: React.ReactNode }) {
   const { phase } = useSiteState();
   return (
     <main className={frame}>
-      <div className={`transition-opacity ${phase === "asleep" ? "opacity-40 duration-700" : "duration-300"}`}>{children}</div>
+      <div className={`transition-opacity ${phase === "asleep" ? "opacity-60 duration-700" : "duration-300"}`}>{children}</div>
     </main>
   );
 }

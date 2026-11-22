@@ -18,12 +18,14 @@ export function StatusLine() {
   const text = copy.status[phase].replace("{n}", String(countdown));
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 bg-background">
+      {/* A soft fade so scrolling content does not cut hard against the bar. */}
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-full h-5 bg-gradient-to-t from-background to-transparent" />
       <div className={`${frame} flex h-8 items-center font-mono text-[12px]`}>
         <span className="flex items-center gap-2 text-muted-foreground">
           <span className={dots[phase]} />
           {text}
         </span>
-        <span className="ml-auto hidden text-faint sm:block">{copy.status.hint}</span>
+        {phase === "awake" || phase === "idle" ? <span className="ml-auto hidden text-faint sm:block">{copy.status.hint}</span> : null}
       </div>
     </div>
   );
