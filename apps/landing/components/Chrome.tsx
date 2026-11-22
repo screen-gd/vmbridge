@@ -67,10 +67,11 @@ function FooterColumn({ label, links }: { label: string; links: { label: string;
 }
 
 /**
- * The site footer inside the page rails: brand, line and license beside the Site and
- * Project link columns, then the giant faint wordmark clipped at the bottom by the
- * footer edge. Columns and the wordmark rise in as they enter view. Ends 2rem above
- * the viewport bottom so the fixed status line never covers it.
+ * The site footer inside the page rails, as one block: brand, line and license on the
+ * left, the Site and Project link columns on the right, and from xl the giant faint
+ * wordmark between them, pinned to the bottom edge and clipped by it. Below xl the
+ * wordmark sits under the columns. Columns and the wordmark rise in as they enter
+ * view. Ends 2rem above the viewport bottom so the fixed status line never covers it.
  */
 export function Footer() {
   const siteLinks = [
@@ -90,32 +91,34 @@ export function Footer() {
   ];
   return (
     <footer className={`${railShell} border-t border-white/10 pb-8`}>
-      <div className={`flex flex-col gap-10 ${innerPad} py-12 sm:flex-row sm:items-start sm:justify-between`}>
-        <Reveal>
-          <Link href="/" className="flex items-center gap-2.5 font-medium">
-            <Logo className="size-6" />
-            VM Bridge
-          </Link>
-          <p className="mt-3 max-w-xs text-sm text-muted-foreground">{copy.footer.line}</p>
-          <p className="mt-2 font-mono text-[13px] text-faint">
-            {copy.footer.license} · v{site.version}
-          </p>
-        </Reveal>
-        <div className="flex gap-16 sm:gap-20">
-          <Reveal delay={60}>
-            <FooterColumn label={copy.footer.site} links={siteLinks} />
+      <div className="relative overflow-hidden">
+        <div className={`relative z-10 flex flex-col gap-10 ${innerPad} py-12 sm:flex-row sm:items-start sm:justify-between`}>
+          <Reveal>
+            <Link href="/" className="flex items-center gap-2.5 font-medium">
+              <Logo className="size-6" />
+              VM Bridge
+            </Link>
+            <p className="mt-3 max-w-xs text-sm text-muted-foreground">{copy.footer.line}</p>
+            <p className="mt-2 font-mono text-[13px] text-faint">
+              {copy.footer.license} · v{site.version}
+            </p>
           </Reveal>
-          <Reveal delay={120}>
-            <FooterColumn label={copy.footer.project} links={projectLinks} />
+          <div className="flex gap-16 sm:gap-20">
+            <Reveal delay={60}>
+              <FooterColumn label={copy.footer.site} links={siteLinks} />
+            </Reveal>
+            <Reveal delay={120}>
+              <FooterColumn label={copy.footer.project} links={projectLinks} />
+            </Reveal>
+          </div>
+        </div>
+        <div aria-hidden className="pointer-events-none xl:absolute xl:inset-x-0 xl:bottom-0">
+          <Reveal>
+            <div className="translate-y-[0.14em] text-center font-medium text-[clamp(4rem,10vw,11rem)] leading-none tracking-tight whitespace-nowrap text-white/[0.06] select-none">
+              VM Bridge
+            </div>
           </Reveal>
         </div>
-      </div>
-      <div aria-hidden className={`overflow-hidden border-t border-white/10 ${innerPad}`}>
-        <Reveal>
-          <div className="translate-y-[0.14em] text-center font-medium text-[clamp(4rem,12vw,11rem)] leading-none tracking-tight text-white/[0.06] select-none">
-            VM Bridge
-          </div>
-        </Reveal>
       </div>
     </footer>
   );
