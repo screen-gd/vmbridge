@@ -1,5 +1,6 @@
 import { innerPad } from "@/lib/styles";
 import { Reveal } from "./Reveal";
+import { SectionDivider } from "./SectionDivider";
 
 /**
  * One landing section. Stacked below the split point: title, body, `side`, then content.
@@ -7,9 +8,9 @@ import { Reveal } from "./Reveal";
  * narrower 1fr/2fr grid, widening to the normal 12-column split at xl. The left column
  * holds title, body and `side`; the right column holds the demo, vertically centred.
  * With `sticky` the left column sticks while a long right column scrolls. Sections sit
- * on one plane inside the page rails, separated by hairline dividers; each section pads
- * itself so the dividers span rail to rail. Header and content reveal as they enter the
- * viewport. On short screens (xl and viewport height <= 700px) the padding shrinks so a
+ * on one plane inside the page rails, separated by hairline dividers that draw in left
+ * to right as they enter view; each section pads itself so the dividers span rail to
+ * rail. Header and content reveal as they enter the viewport. On short screens (xl and viewport height <= 700px) the padding shrinks so a
  * split section still fits one screen.
  */
 export function Section({
@@ -40,7 +41,8 @@ export function Section({
       ? `xl:grid xl:grid-cols-12 xl:gap-x-16 ${sticky ? "xl:items-start" : "xl:items-center"}`
       : "";
   return (
-    <section id={id} className={`scroll-mt-14 ${innerPad} py-14 lg:py-16 xl:short:py-6`}>
+    <section id={id} className={`scroll-mt-14 ${innerPad} relative py-14 lg:py-16 xl:short:py-6`}>
+      <SectionDivider />
       <div className={grid}>
         <Reveal className={split ? `min-w-0 xl:col-span-4 ${sticky ? "xl:sticky xl:top-20" : ""}` : ""}>
           <h2 className="title">{title}</h2>

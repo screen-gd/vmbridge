@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { copy } from "@/lib/copy";
 import { providers } from "@/lib/data";
 import { useInView, useReducedMotion } from "@/lib/hooks";
@@ -27,6 +27,11 @@ export function Providers() {
   const reduced = useReducedMotion();
   const { phase } = useSiteState();
   const packets = inView && !reduced && phase !== "asleep";
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    if (inView) setSeen(true);
+  }, [inView]);
+  const shown = reduced || seen;
 
   return (
     <Section id="providers" title={copy.providers.title} body={copy.providers.body}>
@@ -71,13 +76,13 @@ export function Providers() {
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-md bg-background p-3">
           <Logo className="size-12 sm:size-14" />
         </div>
-        {spots.map((spot) => (
+        {spots.map((spot, i) => (
           <div
             key={spot.provider.id}
-            className="absolute -translate-x-1/2 -translate-y-1/2 rounded-md bg-background"
-            style={{ left: `${spot.x}%`, top: `${spot.y}%` }}
+            className={`reveal-scale absolute -translate-x-1/2 -translate-y-1/2 rounded-md bg-background ${shown ? "reveal-in" : ""}`}
+            style={{ left: `${spot.x}%`, top: `${spot.y}%`, transitionDelay: shown ? `${Math.min(i, 8) * 60}ms` : "0ms" }}
           >
-            <div className="flex flex-col items-center gap-1 p-1.5">
+            <div className="flex flex-col items-center gap-1 p-1.5 opacity-90 transition-[transform,opacity] duration-150 hover:-translate-y-0.5 hover:opacity-100">
               <span className="bg-background transition-transform duration-150 hover:scale-[1.06]">
                 <ProviderLogo provider={spot.provider} className="size-9 rounded-md ring-white/10 sm:size-11" />
               </span>

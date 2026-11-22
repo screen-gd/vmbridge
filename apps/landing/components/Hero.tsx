@@ -41,6 +41,7 @@ let supportsWebgl: boolean | undefined;
  */
 export function Hero() {
   const [vms, setVms] = useState(initialVms);
+  const [sceneReady, setSceneReady] = useState(false);
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const narrow = useMedia("(max-width: 639px)");
   const webgl = useSyncExternalStore(
@@ -101,23 +102,35 @@ export function Hero() {
             </div>
           </div>
         </div>
-        {/* The eight supported providers, linking down to the providers section. */}
-        <div className="flex h-14 items-center justify-center gap-4 border-t border-white/10 px-6 sm:gap-6">
-          {providers.map((provider) => (
+        {/* The eight supported providers, linking down to the providers section;
+            each logo fades in left to right after the title settles. */}
+        <div className="relative flex h-14 items-center justify-center gap-4 px-6 sm:gap-6">
+          <div aria-hidden className="absolute inset-x-0 top-0 h-px origin-left bg-white/10 animate-[draw-x_600ms_ease-out_240ms_both]" />
+          {providers.map((provider, i) => (
             <a
               key={provider.id}
               href="/#providers"
               title={provider.name}
               aria-label={provider.name}
-              className="opacity-70 transition-opacity duration-150 hover:opacity-100"
+              style={{ animation: `fade-in 400ms ease-out ${600 + i * 30}ms backwards` }}
+              className="opacity-70 transition-[opacity,transform] duration-150 hover:-translate-y-0.5 hover:opacity-100"
             >
               <ProviderLogo provider={provider} className="size-6 rounded-[4px]" />
             </a>
           ))}
         </div>
       </div>
-      <div className="flex min-w-0 flex-col xl:border-l xl:border-white/10">
-        <div className="flex h-12 items-center justify-between border-b border-white/10 px-6 font-mono text-[12px] text-faint max-xl:border-t">
+      <div className="relative flex min-w-0 flex-col">
+        <div aria-hidden className="absolute inset-y-0 left-0 hidden w-px origin-top bg-white/10 animate-[draw-y_600ms_ease-out_both] xl:block" />
+        {/* Labels and chips fade in once the scene has drawn its first frame;
+            without JavaScript or WebGL they show straight away. */}
+        <div
+          className={`relative flex h-12 items-center justify-between px-6 font-mono text-[12px] text-faint [html.js_&]:transition-opacity [html.js_&]:duration-500 ${
+            sceneReady || !webgl ? "" : "[html.js_&]:opacity-0"
+          }`}
+        >
+          <div aria-hidden className="absolute inset-x-0 bottom-0 h-px origin-left bg-white/10 animate-[draw-x_600ms_ease-out_120ms_both]" />
+          <div aria-hidden className="absolute inset-x-0 top-0 h-px origin-left bg-white/10 animate-[draw-x_600ms_ease-out_120ms_both] xl:hidden" />
           <span>{copy.diagram.devices}</span>
           <span>{copy.diagram.bridge}</span>
           <span>{copy.diagram.vms}</span>
@@ -131,14 +144,21 @@ export function Hero() {
             <Topology log={false} />
           </div>
           {webgl ? (
-            <BridgeScene vms={vms} onToggle={toggle} narrow={narrow} />
+            <div className="absolute inset-0 animate-[fade-in_500ms_ease-out]">
+              <BridgeScene vms={vms} onToggle={toggle} narrow={narrow} onReady={() => setSceneReady(true)} />
+            </div>
           ) : (
             <div className="absolute inset-0 hidden overflow-hidden [html.js_&]:block">
               <Topology log={false} />
             </div>
           )}
         </div>
-        <div className="flex min-h-14 flex-wrap items-center gap-x-3 gap-y-2 border-t border-white/10 px-6 py-2.5 xl:h-14 xl:flex-nowrap xl:justify-between xl:py-0">
+        <div
+          className={`relative flex min-h-14 flex-wrap items-center gap-x-3 gap-y-2 px-6 py-2.5 xl:h-14 xl:flex-nowrap xl:justify-between xl:py-0 [html.js_&]:transition-opacity [html.js_&]:duration-500 ${
+            sceneReady || !webgl ? "" : "[html.js_&]:opacity-0"
+          }`}
+        >
+          <div aria-hidden className="absolute inset-x-0 top-0 h-px origin-left bg-white/10 animate-[draw-x_600ms_ease-out_240ms_both]" />
           <span className="text-[13px] whitespace-nowrap text-faint xl:text-[12px]">{copy.hero.hint}</span>
           <div className="flex flex-wrap gap-2 xl:flex-nowrap">
             {vms.map((vm) => (

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { SmoothScroll } from "@/components/SmoothScroll";
 import { openGraph, site } from "@/lib/site";
 import "./globals.css";
 
@@ -25,7 +26,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Flags JS availability before paint so `.reveal` blocks only hide when they can be revealed. */}
         <script dangerouslySetInnerHTML={{ __html: "document.documentElement.classList.add('js')" }} />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <SmoothScroll />
+      </body>
     </html>
   );
 }

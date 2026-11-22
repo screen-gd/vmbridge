@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { copy } from "@/lib/copy";
 import { useReducedMotion } from "@/lib/hooks";
+import { Reveal } from "./Reveal";
 import { Section } from "./Section";
 import { stateDot } from "./Topology";
 import { Panel } from "./Window";
@@ -126,16 +127,17 @@ export function Lifecycle() {
         <>
           <div className="flex flex-col">
             {copy.lifecycle.states.map((state, i) => (
-              <div
-                key={state.name}
-                aria-current={i === current || undefined}
-                className={`-mx-3 flex items-center gap-3 rounded-lg px-3 py-1.5 text-lg font-medium transition-colors duration-200 ${
-                  i === current ? "bg-muted" : "text-faint"
-                }`}
-              >
-                <span className={`shrink-0 transition-all duration-200 ${markers[i]}`} />
-                {state.name}
-              </div>
+              <Reveal key={state.name} delay={i * 60}>
+                <div
+                  aria-current={i === current || undefined}
+                  className={`-mx-3 flex items-center gap-3 rounded-lg px-3 py-1.5 text-lg font-medium transition-colors duration-200 ${
+                    i === current ? "bg-muted" : "text-faint"
+                  }`}
+                >
+                  <span className={`shrink-0 transition-all duration-200 ${markers[i]}`} />
+                  {state.name}
+                </div>
+              </Reveal>
             ))}
           </div>
           <div className="mt-6 grid">

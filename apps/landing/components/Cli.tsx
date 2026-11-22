@@ -35,6 +35,7 @@ export function Cli() {
           orientation="vertical"
           verticalAt="always"
           showAllDetail
+          stagger
           items={pillItems}
           active={selected}
           onChange={(id) => runRef.current?.(id)}

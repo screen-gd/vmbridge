@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Footer, Nav } from "@/components/Chrome";
 import { Text } from "@/components/Faq";
+import { Reveal } from "@/components/Reveal";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { faq } from "@/lib/data";
 import { openGraph, site } from "@/lib/site";
@@ -47,13 +48,15 @@ export default function FaqPage() {
         <div className="mx-auto max-w-[52rem]">
           <h1 className="title">Questions</h1>
           <Accordion multiple keepMounted className="mt-8">
-            {faq.map(({ question, answer }) => (
-              <AccordionItem key={question} value={question}>
-                <AccordionTrigger>{question}</AccordionTrigger>
-                <AccordionContent>
-                  <Text text={answer} />
-                </AccordionContent>
-              </AccordionItem>
+            {faq.map(({ question, answer }, i) => (
+              <Reveal key={question} delay={Math.min(i, 8) * 60}>
+                <AccordionItem value={question}>
+                  <AccordionTrigger>{question}</AccordionTrigger>
+                  <AccordionContent>
+                    <Text text={answer} />
+                  </AccordionContent>
+                </AccordionItem>
+              </Reveal>
             ))}
           </Accordion>
         </div>

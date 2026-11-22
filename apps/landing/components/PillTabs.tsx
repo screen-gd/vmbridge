@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useInView, useReducedMotion } from "@/lib/hooks";
 import { pill, pillActive } from "@/lib/styles";
 
 interface PillItem {
@@ -17,7 +18,8 @@ interface PillItem {
  * and falls back to the scrollable horizontal row below it; a vertical item may
  * carry `detail`, shown under its label while active, or on every item with
  * `showAllDetail`. The indicator only renders once measured, so first paint does
- * not animate from zero.
+ * not animate from zero. `stagger` reveals the items one by one (60ms steps) the
+ * first time the list enters the viewport.
  */
 export function PillTabs({
   items,
@@ -28,6 +30,7 @@ export function PillTabs({
   verticalAt = "xl",
   wrap = false,
   showAllDetail = false,
+  stagger = false,
   itemClassName = "",
   indicatorClassName = "bg-muted",
 }: {
@@ -41,10 +44,19 @@ export function PillTabs({
   wrap?: boolean;
   /** Show every item's `detail`, not only the active one. */
   showAllDetail?: boolean;
+  /** Reveal items child by child when the list first scrolls into view. */
+  stagger?: boolean;
   itemClassName?: string;
   indicatorClassName?: string;
 }) {
   const list = useRef<HTMLDivElement>(null);
+  const inView = useInView(list, "0px 0px -10% 0px");
+  const reduced = useReducedMotion();
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    if (inView) setSeen(true);
+  }, [inView]);
+  const shown = !stagger || reduced || seen;
   const buttons = useRef(new Map<string, HTMLButtonElement>());
   const [box, setBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const vertical = orientation === "vertical";
@@ -88,7 +100,7 @@ export function PillTabs({
           style={{ transform: `translate(${box.x}px, ${box.y}px)`, width: box.w, height: box.h }}
         />
       ) : null}
-      {items.map((item) => {
+      {items.map((item, i) => {
         const current = item.id === active;
         return (
           <button
@@ -101,7 +113,10 @@ export function PillTabs({
             role="tab"
             aria-selected={current}
             onClick={() => onChange(item.id)}
-            className={`relative z-10 shrink-0 ${pill} ${current ? pillActive : ""} ${vertical ? atItem : ""} ${itemClassName}`}
+            style={stagger ? { transitionDelay: shown ? `${Math.min(i, 8) * 60}ms` : "0ms" } : undefined}
+            className={`relative z-10 shrink-0 ${pill} ${current ? pillActive : ""} ${vertical ? atItem : ""} ${itemClassName} ${
+              stagger ? `reveal ${shown ? "reveal-in" : ""}` : ""
+            }`}
           >
             {item.label}
             {vertical && item.detail && (showAllDetail || current) ? <span className={`mt-2 font-sans ${atDetail}`}>{item.detail}</span> : null}

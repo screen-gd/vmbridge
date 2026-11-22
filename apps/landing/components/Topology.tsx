@@ -81,9 +81,11 @@ const wireStyle: Record<WireKind, { stroke: string; strokeOpacity: number; dash?
 
 /**
  * One wire between two nodes, with two packets moving along it while it carries traffic.
- * Packets are round-capped stubs so they stay circular when the SVG stretches non-uniformly.
+ * Packets are round-capped stubs so they stay circular when the SVG stretches
+ * non-uniformly. Until `drawn`, solid wires hide behind a full-length dash and dashed
+ * wires fade — the `.js`-gated CSS draws them in once the diagram enters view.
  */
-function Wire({ d, kind, packets }: { d: string; kind: WireKind; packets: boolean }) {
+function Wire({ d, kind, packets, drawn }: { d: string; kind: WireKind; packets: boolean; drawn: boolean }) {
   const style = wireStyle[kind];
   return (
     <>
@@ -94,7 +96,9 @@ function Wire({ d, kind, packets }: { d: string; kind: WireKind; packets: boolea
         strokeOpacity={style.strokeOpacity}
         strokeWidth={1}
         strokeDasharray={style.dash}
+        pathLength={kind === "active" ? 1 : undefined}
         vectorEffect="non-scaling-stroke"
+        className={`${kind === "active" ? "wire-draw" : "wire-fade"} ${drawn ? "wire-drawn" : ""}`}
       />
       {kind === "active" && packets ? (
         <>
@@ -195,7 +199,24 @@ export function Topology({ stacked = false, log = true }: { stacked?: boolean; l
   const panel = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
   const { phase } = useSiteState();
-  const packets = useInView(panel) && !reduced && phase !== "asleep";
+  const inView = useInView(panel);
+  const [wires, setWires] = useState(false);
+  useEffect(() => {
+    if (inView) setWires(true);
+  }, [inView]);
+  // Packets only start once the wires have drawn in, so traffic never runs on
+  // a wire that is not there yet.
+  const [flow, setFlow] = useState(false);
+  useEffect(() => {
+    if (!wires) return;
+    if (reduced) {
+      setFlow(true);
+      return;
+    }
+    const timer = setTimeout(() => setFlow(true), 650);
+    return () => clearTimeout(timer);
+  }, [wires, reduced]);
+  const packets = flow && !reduced && phase !== "asleep";
   const shown = stacked ? rows.slice(-3) : rows.slice(-8);
 
   const pushRow = (project: string, state: string, detail: string) =>
@@ -229,14 +250,15 @@ export function Topology({ stacked = false, log = true }: { stacked?: boolean; l
             `hidden` also keeps the other copy's buttons out of the a11y tree. */}
         <div className="relative md:hidden" style={{ aspectRatio: `${layouts.narrow.w} / ${layouts.narrow.h}` }}>
           <svg viewBox={`0 0 ${layouts.narrow.w} ${layouts.narrow.h}`} preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
-            <Wire d={wire(layouts.narrow.devices.mac, layouts.narrow.bridge, false)} kind="active" packets={packets} />
-            <Wire d={wire(layouts.narrow.devices.phone, layouts.narrow.bridge, false)} kind="active" packets={packets} />
+            <Wire d={wire(layouts.narrow.devices.mac, layouts.narrow.bridge, false)} kind="active" packets={packets} drawn={wires} />
+            <Wire d={wire(layouts.narrow.devices.phone, layouts.narrow.bridge, false)} kind="active" packets={packets} drawn={wires} />
             {[...vms].reverse().map((vm) => (
               <Wire
                 key={vm.id}
                 d={trunkWire(vm.id, layouts.narrow.vmY[vm.id])}
                 kind={vm.state === "online" ? "active" : vm.state}
                 packets={packets}
+                drawn={wires}
               />
             ))}
           </svg>
@@ -269,14 +291,15 @@ export function Topology({ stacked = false, log = true }: { stacked?: boolean; l
           <span className="absolute top-3 left-[50%] -translate-x-1/2 font-mono text-[13px] text-faint">{copy.diagram.bridge}</span>
           <span className="absolute top-3 left-[84%] -translate-x-1/2 font-mono text-[13px] text-faint">{copy.diagram.vms}</span>
           <svg viewBox={`0 0 ${layouts.wide.w} ${layouts.wide.h}`} preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
-            <Wire d={wire(layouts.wide.devices.mac, layouts.wide.bridge, true)} kind="active" packets={packets} />
-            <Wire d={wire(layouts.wide.devices.phone, layouts.wide.bridge, true)} kind="active" packets={packets} />
+            <Wire d={wire(layouts.wide.devices.mac, layouts.wide.bridge, true)} kind="active" packets={packets} drawn={wires} />
+            <Wire d={wire(layouts.wide.devices.phone, layouts.wide.bridge, true)} kind="active" packets={packets} drawn={wires} />
             {vms.map((vm) => (
               <Wire
                 key={vm.id}
                 d={wire(layouts.wide.bridge, layouts.wide.vms[vm.id], true)}
                 kind={vm.state === "online" ? "active" : vm.state}
                 packets={packets}
+                drawn={wires}
               />
             ))}
           </svg>

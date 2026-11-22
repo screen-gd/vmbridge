@@ -115,14 +115,14 @@ export function SiteStateProvider({ children }: { children: React.ReactNode }) {
 
 /**
  * <main> wrapper that dims the page's content while the site is asleep; the dim applies
- * to an inner wrapper. `railShell` draws the two page rails without padding so the
- * `divide-y` hairlines between sections span rail to rail; each section pads itself.
+ * to an inner wrapper. `railShell` draws the two page rails without padding so each
+ * section's own `SectionDivider` hairline spans rail to rail; sections pad themselves.
  */
 export function LandingMain({ children }: { children: React.ReactNode }) {
   const { phase } = useSiteState();
   return (
     <main className={railShell}>
-      <div className={`divide-y divide-white/10 transition-opacity ${phase === "asleep" ? "opacity-60 duration-700" : "duration-300"}`}>{children}</div>
+      <div className={`transition-opacity ${phase === "asleep" ? "opacity-60 duration-700" : "duration-300"}`}>{children}</div>
     </main>
   );
 }

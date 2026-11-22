@@ -2,6 +2,7 @@ import Link from "next/link";
 import { copy } from "@/lib/copy";
 import { faq, featuredFaq } from "@/lib/data";
 import { secondaryButton } from "@/lib/styles";
+import { Reveal } from "./Reveal";
 import { Section } from "./Section";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 
@@ -36,13 +37,15 @@ export function Faq() {
       }
     >
       <Accordion defaultValue={[featuredFaq[0].question]} keepMounted>
-        {featuredFaq.map(({ question, answer }) => (
-          <AccordionItem key={question} value={question}>
-            <AccordionTrigger>{question}</AccordionTrigger>
-            <AccordionContent>
-              <Text text={answer} />
-            </AccordionContent>
-          </AccordionItem>
+        {featuredFaq.map(({ question, answer }, i) => (
+          <Reveal key={question} delay={Math.min(i, 8) * 60}>
+            <AccordionItem value={question}>
+              <AccordionTrigger>{question}</AccordionTrigger>
+              <AccordionContent>
+                <Text text={answer} />
+              </AccordionContent>
+            </AccordionItem>
+          </Reveal>
         ))}
       </Accordion>
     </Section>

@@ -16,7 +16,7 @@ function AccordionItem({ className, ...props }: AccordionPrimitive.Item.Props) {
   return (
     <AccordionPrimitive.Item
       data-slot="accordion-item"
-      className={cn("rounded-xl px-5 transition-colors duration-300 data-open:bg-card", className)}
+      className={cn("rounded-xl px-5 transition-colors duration-[320ms] data-open:bg-card", className)}
       {...props}
     />
   );
@@ -42,7 +42,7 @@ function AccordionTrigger({ className, children, ...props }: AccordionPrimitive.
           className="relative mt-1 grid size-5 shrink-0 place-items-center text-muted-foreground transition-colors group-hover/accordion-trigger:text-foreground"
         >
           <span className="absolute h-px w-3 bg-current" />
-          <span className="absolute h-3 w-px bg-current transition-transform duration-300 ease-out group-aria-expanded/accordion-trigger:rotate-90" />
+          <span className="absolute h-3 w-px bg-current transition-transform duration-[320ms] ease-out group-aria-expanded/accordion-trigger:rotate-90" />
         </span>
       </AccordionPrimitive.Trigger>
     </AccordionPrimitive.Header>
@@ -51,16 +51,20 @@ function AccordionTrigger({ className, children, ...props }: AccordionPrimitive.
 
 function AccordionContent({ className, children, ...props }: AccordionPrimitive.Panel.Props) {
   return (
+    // The panel owns the animation: `data-starting-style`/`data-ending-style` land on
+    // this element, so the height (from Base UI's measured panel-height variable) and
+    // opacity transition here — 320ms opening, a quicker 240ms closing.
     <AccordionPrimitive.Panel
       data-slot="accordion-content"
-      className={cn("overflow-hidden", className)}
+      className={cn(
+        "h-(--accordion-panel-height) overflow-hidden opacity-100 transition-[height,opacity] duration-[320ms] ease-[cubic-bezier(0.22,1,0.36,1)] data-ending-style:h-0 data-ending-style:opacity-0 data-ending-style:duration-[240ms] data-starting-style:h-0 data-starting-style:opacity-0",
+        className,
+      )}
       {...props}
     >
-      <div className="h-(--accordion-panel-height) transition-[height] duration-300 ease-out data-ending-style:h-0 data-starting-style:h-0">
-        <p className="max-w-[68ch] pr-9 pb-6 text-base leading-relaxed text-pretty text-muted-foreground [overflow-wrap:anywhere] sm:pr-11">
-          {children}
-        </p>
-      </div>
+      <p className="max-w-[68ch] pr-9 pb-6 text-base leading-relaxed text-pretty text-muted-foreground [overflow-wrap:anywhere] sm:pr-11">
+        {children}
+      </p>
     </AccordionPrimitive.Panel>
   );
 }

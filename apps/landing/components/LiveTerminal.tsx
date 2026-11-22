@@ -93,6 +93,17 @@ export function LiveTerminal({
     if (el) el.scrollTop = lines.length ? el.scrollHeight : 0;
   }, [lines]);
 
+  /** Print output lines one at a time, about 25ms apart, capped so a long script
+      lands within ~600ms; reduced motion prints everything at once. */
+  const print = (output: string[]) => {
+    if (reduced || output.length <= 1) {
+      setLines((l) => [...l, ...output]);
+      return;
+    }
+    const step = Math.min(25, 600 / output.length);
+    output.forEach((text, i) => setTimeout(() => setLines((l) => [...l, text]), step * (i + 1)));
+  };
+
   /** Run one command exactly as if typed: echo it, print its output, or answer it. */
   const run = (raw: string) => {
     const name = raw.trim().toLowerCase();
@@ -104,16 +115,20 @@ export function LiveTerminal({
     const echo = `$ ${raw.trim()}`;
     const script = cliScripts.find((s) => s[0] === `$ ${name}`);
     if (script) {
-      setLines((l) => [...l, echo, ...script.filter((t) => !t.startsWith("$ "))]);
+      setLines((l) => [...l, echo]);
+      print(script.filter((t) => !t.startsWith("$ ")));
       onCommand?.(commands[cliScripts.indexOf(script)].command);
     } else if (name === "help") {
-      setLines((l) => [...l, echo, ...copy.terminal.help.map(([cmd, does]) => `${cmd.padEnd(helpWidth)}${does}`)]);
+      setLines((l) => [...l, echo]);
+      print(copy.terminal.help.map(([cmd, does]) => `${cmd.padEnd(helpWidth)}${does}`));
     } else if (name === "sleep") {
-      setLines((l) => [...l, echo, copy.terminal.sleeping]);
+      setLines((l) => [...l, echo]);
+      print([copy.terminal.sleeping]);
       sleep();
     } else if (name === "wake") {
       wake();
-      setLines((l) => [...l, echo, copy.terminal.awake]);
+      setLines((l) => [...l, echo]);
+      print([copy.terminal.awake]);
     } else if (name === "clear") {
       setLines([]);
     } else {
@@ -162,6 +177,7 @@ export function LiveTerminal({
       <div
         ref={scroll}
         data-terminal-output
+        data-lenis-prevent
         onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
         className={`relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
           scrolled ? "[mask-image:linear-gradient(to_bottom,transparent,black_1.5rem)]" : ""

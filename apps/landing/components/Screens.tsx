@@ -30,9 +30,9 @@ const tabs = copy.dashboard.tabs;
  * column at lg, a horizontal pill row below it. The active tab's caption rides under
  * its label at lg and under the pill row below lg. The tab root wraps the whole
  * section so the list in the left column and the panels in the right share state.
- * Every panel keeps the same desktop frame, so the section height never moves.
- * Phones get the phone shot when one exists, else a side-scrolling look at the
- * desktop shot.
+ * Panels stack absolutely inside one fixed frame and crossfade on switch (opacity
+ * plus a small rise, ~220ms), so the section height never moves. Phones get the
+ * phone shot when one exists, else a side-scrolling look at the desktop shot.
  */
 export function Screens() {
   const [active, setActive] = useState<ShotId>("canvas");
@@ -75,55 +75,43 @@ export function Screens() {
           </>
         }
       >
-        {shots.map((shot) => {
-          const phone = phoneShots[shot.id];
-          return (
-            <TabsContent key={shot.id} value={shot.id} keepMounted>
-              {/* sm and up: the desktop shot inside its card frame, capped so it fits one screen. */}
-              <div className="mx-auto hidden w-full max-w-[min(100%,calc((100svh-12rem)*1.6))] rounded-xl bg-card p-1.5 sm:block">
-                <div className="relative aspect-[16/10] overflow-hidden rounded-lg">
+        {/* One fixed frame for every panel: portrait below sm, 16/10 above. Panels
+            stack absolutely and crossfade on switch — inactive panels keep `hidden`
+            semantics for screen readers while `invisible` handles paint and input;
+            the visibility delay lets the outgoing shot fade before it drops. */}
+        <div data-tabs-stage className="mx-auto w-full max-w-80 rounded-xl bg-card p-1.5 sm:max-w-[min(100%,calc((100svh-12rem)*1.6))]">
+          <div className="relative aspect-[780/1688] overflow-hidden rounded-lg sm:aspect-[16/10]">
+            {shots.map((shot) => {
+              const phone = phoneShots[shot.id];
+              return (
+                <TabsContent key={shot.id} value={shot.id} keepMounted className="absolute inset-0">
+                  {phone ? (
+                    <Image
+                      src={phone}
+                      alt={tabs[shot.id].caption}
+                      fill
+                      sizes="320px"
+                      className="object-cover sm:hidden"
+                      priority={shot.id === "canvas"}
+                    />
+                  ) : (
+                    <div data-lenis-prevent className="h-full overflow-x-auto sm:hidden">
+                      <Image src={shot.src} alt={tabs[shot.id].caption} width={2880} height={1800} className="h-full w-auto max-w-none" />
+                    </div>
+                  )}
                   <Image
                     src={shot.src}
                     alt={tabs[shot.id].caption}
                     fill
                     sizes="(min-width: 1280px) 912px, 100vw"
-                    className="object-contain"
+                    className="hidden object-contain sm:block"
                     priority={shot.id === "canvas"}
                   />
-                </div>
-              </div>
-              {/* Below sm: one portrait box for every tab so the section height stays
-                  fixed — the phone shot fills it, the desktop shot scrolls sideways. */}
-              <div className="sm:hidden">
-                <div className="mx-auto max-w-80 rounded-xl bg-card p-1.5">
-                  {phone ? (
-                    <div className="aspect-[780/1688] overflow-hidden rounded-lg">
-                      <Image
-                        src={phone}
-                        alt={tabs[shot.id].caption}
-                        width={780}
-                        height={1688}
-                        className="h-auto w-full"
-                        priority={shot.id === "canvas"}
-                      />
-                    </div>
-                  ) : (
-                    <div className="aspect-[780/1688] overflow-x-auto rounded-lg">
-                      <Image
-                        src={shot.src}
-                        alt={tabs[shot.id].caption}
-                        width={2880}
-                        height={1800}
-                        className="h-full w-auto max-w-none"
-                        priority={shot.id === "canvas"}
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-            </TabsContent>
-          );
-        })}
+                </TabsContent>
+              );
+            })}
+          </div>
+        </div>
       </Section>
     </Tabs>
   );

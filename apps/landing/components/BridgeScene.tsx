@@ -215,7 +215,18 @@ function Rig({ children, narrow }: { children: React.ReactNode; narrow: boolean 
   );
 }
 
-export function BridgeScene({ vms, onToggle, narrow }: { vms: SceneVm[]; onToggle: (id: string) => void; narrow: boolean }) {
+export function BridgeScene({
+  vms,
+  onToggle,
+  narrow,
+  onReady,
+}: {
+  vms: SceneVm[];
+  onToggle: (id: string) => void;
+  narrow: boolean;
+  /** Fires once the canvas exists, so the hero can fade the stage chrome in. */
+  onReady?: () => void;
+}) {
   const wrapper = useRef<HTMLDivElement>(null);
   const inView = useInView(wrapper);
   const reduced = useReducedMotion();
@@ -233,6 +244,7 @@ export function BridgeScene({ vms, onToggle, narrow }: { vms: SceneVm[]; onToggl
         dpr={[1, 2]}
         camera={{ fov: 40, position: [0, 0.9, 10] }}
         gl={{ antialias: true, alpha: true }}
+        onCreated={onReady}
         aria-label="VM Bridge connecting your devices to cloud VMs"
       >
         <ambientLight intensity={0.8} />

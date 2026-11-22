@@ -77,6 +77,7 @@
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
@@ -144,5 +145,107 @@
 @keyframes finish-flash {
   from {
     color: rgb(255 255 255);
+  }
+}
+
+/* Lenis smooth scroll: keep native scroll-behavior out of the way while Lenis
+   smooths, and let nested scrollers opt out with `data-lenis-prevent`. */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
+/* Section dividers draw left to right the first time they enter view. The hidden
+   state only exists under `.js`, so the lines are present without JavaScript. */
+.draw {
+  transform-origin: left;
+}
+.js .draw:not(.draw-in) {
+  transform: scaleX(0);
+}
+.js .draw-in {
+  transition: transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Fade-and-grow variant of `.reveal` for positioned children such as the provider
+   ring nodes; `scale` composes with the translate transforms on those nodes. */
+.reveal-scale {
+  transition:
+    opacity 500ms cubic-bezier(0.22, 1, 0.36, 1),
+    scale 500ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.js .reveal-scale:not(.reveal-in) {
+  opacity: 0;
+  scale: 0.9;
+}
+
+/* Tabs panels crossfade on switch: inactive panels stay mounted and rendered
+   (the display override) so the outgoing shot can fade. `[hidden]` doubles as the
+   inactive marker — it keeps panels off screen, unclickable and out of the a11y
+   tree — while `data-ending-style` keeps the closing panel visible just long
+   enough to fade, and `data-starting-style` gives the opening panel its start
+   pose. Without JS `hidden` hides panels as usual. */
+.js [data-slot="tabs-content"] {
+  transition:
+    opacity 220ms ease-out,
+    translate 220ms ease-out;
+}
+.js [data-slot="tabs-content"][hidden] {
+  display: block !important;
+  visibility: hidden;
+  opacity: 0;
+  translate: 0 6px;
+}
+.js [data-slot="tabs-content"][hidden][data-ending-style] {
+  visibility: visible;
+}
+.js [data-slot="tabs-content"][data-starting-style] {
+  opacity: 0;
+  translate: 0 6px;
+}
+
+/* Diagram wires draw (solid wires, via dashoffset) or fade (dashed wires) in on
+   first entry, then packets start. Without JavaScript every wire renders drawn. */
+.js .wire-draw:not(.wire-drawn) {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+.js .wire-draw.wire-drawn {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 700ms ease-out;
+}
+.js .wire-fade:not(.wire-drawn) {
+  stroke-opacity: 0;
+}
+.js .wire-fade.wire-drawn {
+  transition: stroke-opacity 500ms ease-out;
+}
+
+/* Fade to the element's natural opacity; paired with `backwards` fill so entrance
+   delays hold the hidden state without pinning the final value after it ends. */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Hairlines scaling in along their axis, for the hero's line system on load. */
+@keyframes draw-x {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes draw-y {
+  from {
+    transform: scaleY(0);
   }
 }

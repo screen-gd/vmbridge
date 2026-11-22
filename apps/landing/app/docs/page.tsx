@@ -58,7 +58,7 @@ function Code({ children }: { children: string }) {
 function Block({ children }: { children: string }) {
   return (
     <div className="relative rounded-md bg-card">
-      <pre className="overflow-x-auto p-4 pr-12 font-mono text-[13px] leading-6 text-foreground">{children}</pre>
+      <pre data-lenis-prevent className="overflow-x-auto p-4 pr-12 font-mono text-[13px] leading-6 text-foreground">{children}</pre>
       <CopyButton text={children} className="absolute top-2 right-2" />
     </div>
   );
@@ -111,7 +111,7 @@ export default function Docs() {
     <>
       <Nav />
       <div className={`${rails} flex gap-12`}>
-        <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-52 shrink-0 overflow-y-auto py-10 lg:block">
+        <aside data-lenis-prevent className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-52 shrink-0 overflow-y-auto py-10 lg:block">
           <DocsNav sections={sections} />
         </aside>
 
