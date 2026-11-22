@@ -162,7 +162,10 @@ let client: Client | undefined;
 try {
   // Provider.
   if (values.environment) await admin("PUT", `/providers/${provider}`, { values: { environment: values.environment } });
-  await time("activate provider", () => admin("POST", `/providers/${provider}/activate`, {}));
+  await time("add provider", async () => {
+    await admin("POST", `/providers/${provider}/add`, {});
+    await admin("POST", `/providers/${provider}/default`, {});
+  });
 
   // Pair like T3 does.
   const pairing = await admin<{ urls: { url: string }[] }>("POST", "/pairing", { name: `Live test (${provider})` });
@@ -216,7 +219,7 @@ try {
     ),
   );
   const project = (await admin<{ projects: Json[] }>("GET", "/overview")).projects.find((entry) => entry.id === projectId)!;
-  vmId = project.vmId;
+  vmId = project.vmIds[0];
   const cwd = clone.cwd as string;
   log(`project ${projectId} on VM ${vmId} at ${cwd}`);
 
@@ -267,19 +270,21 @@ try {
 
   // Wake.
   if (threadId) {
-    await client.call("orchestration.dispatchCommand", {
-      type: "message.dispatch",
-      commandId: crypto.randomUUID(),
-      threadId,
-      createdBy: "user",
-      creationSource: "web",
-      messageId: crypto.randomUUID(),
-      attachments: [],
-      dispatchMode: { type: "start_immediately" },
-      text: "Reply with the single word again.",
-    });
-    log("message sent to the sleeping VM");
-    await time("wake on message and second turn", () =>
+    // VM Bridge holds the message until the VM is awake and T3 has taken it, so this times the wake.
+    await time("wake on message (until T3 took it)", () =>
+      client!.call("orchestration.dispatchCommand", {
+        type: "message.dispatch",
+        commandId: crypto.randomUUID(),
+        threadId,
+        createdBy: "user",
+        creationSource: "web",
+        messageId: crypto.randomUUID(),
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        text: "Reply with the single word again.",
+      }),
+    );
+    await time("second agent turn", () =>
       poll("second turn", 10 * 60_000, async () => {
         const projection = await client!.call("orchestration.getThreadProjection", { threadId });
         const run = (projection.runs as Json[]).find((entry) => entry.ordinal === 2);
@@ -310,10 +315,14 @@ try {
 } finally {
   client?.close();
   if (vmId && !values.keep) {
-    await admin("DELETE", `/vms/${vmId}`).then(
-      () => log(`deleted VM ${vmId}`),
-      (error) => log(`could not delete VM ${vmId}: ${error}`),
-    );
+    // Every VM the project ended up on, in case a new thread went to an extra VM.
+    const project = (await admin<{ projects: Json[] }>("GET", "/overview")).projects.find((entry) => (entry.vmIds as string[]).includes(vmId!));
+    for (const id of new Set([vmId, ...((project?.vmIds as string[] | undefined) ?? [])])) {
+      await admin("DELETE", `/vms/${id}`).then(
+        () => log(`deleted VM ${id}`),
+        (error) => log(`could not delete VM ${id}: ${error}`),
+      );
+    }
   }
   // Unpair this run's device so test devices don't pile up in the dashboard.
   const { clients } = await admin<{ clients: { id: string; name: string }[] }>("GET", "/overview");

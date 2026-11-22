@@ -5,7 +5,7 @@ import { useInView, useReducedMotion } from "@/lib/hooks";
 
 /* A pretend zsh session running the real VM Bridge CLI. Every vmbridge string below is copied from apps/cli. */
 
-const version = "0.2.0";
+const version = "1.0.0";
 const defaultPort = 3774;
 const home = "/Users/you";
 const dataDir = `${home}/.vmbridge`;
@@ -18,9 +18,9 @@ Usage:
   vmbridge stop                                     Stop VM Bridge, including the background service
   vmbridge service install [--host] [--port]        Run VM Bridge in the background at login
   vmbridge service uninstall                        Remove the background service
-  vmbridge key                                      Set a new dashboard key
+  vmbridge password                                 Set a new dashboard password
 
-The dashboard key can also come from VMBRIDGE_DASHBOARD_KEY. Data lives in ${dataDir}.`;
+The password can also come from VMBRIDGE_PASSWORD. Data lives in ${dataDir}.`;
 
 /** Directories relative to home. Names without an entry here are files. */
 const tree: Record<string, string[]> = {
@@ -116,7 +116,7 @@ interface Line {
   text: string;
   prompt?: Prompt;
 }
-/** prompt: zsh waits for a command. secret: a key prompt with echo off. running: VM Bridge in the foreground. busy: a command is working. */
+/** prompt: zsh waits for a command. secret: a password prompt with echo off. running: VM Bridge in the foreground. busy: a command is working. */
 type Mode = "prompt" | "secret" | "running" | "busy" | "closed";
 
 interface View {
@@ -244,7 +244,7 @@ class Shell {
     const word = words.at(-1) ?? "";
     let options: string[] = [];
     if (words.length === 1) options = commands;
-    else if (words[0] === "vmbridge" && words.length === 2) options = word.startsWith("-") ? ["--help", "--host", "--port", "--version"] : ["key", "run", "service", "stop"];
+    else if (words[0] === "vmbridge" && words.length === 2) options = word.startsWith("-") ? ["--help", "--host", "--port", "--version"] : ["password", "run", "service", "stop"];
     else if (words[0] === "vmbridge" && words[1] === "service" && words.length === 3) options = ["install", "uninstall"];
     else if (words[0] === "cd" || words[0] === "ls") {
       const slash = word.lastIndexOf("/");
@@ -272,7 +272,7 @@ class Shell {
     if (mode === "prompt") {
       this.set({ lines: [...this.view.lines, { id: this.nextId++, text: `${input}^C`, prompt: { cwd, ok } }], input: "", caret: 0, completions: [] });
     } else if (mode === "secret") {
-      // The key prompt reads in raw mode, so ^C is not echoed. The CLI prints the error instead.
+      // The password prompt reads in raw mode, so ^C is not echoed. The CLI prints the error instead.
       this.onSecret = null;
       this.print(question, "Cancelled.");
       this.set({ input: "", caret: 0 });
@@ -330,7 +330,7 @@ class Shell {
     this.set({ mode: "secret", question });
     this.onSecret = answer;
     if (!this.autoSecret) return;
-    // Nothing shows while a key is typed, so a pause stands in for typing it.
+    // Nothing shows while a password is typed, so a pause stands in for typing it.
     this.typing.push(setTimeout(() => this.submit(), this.instant ? 0 : 900 + Math.random() * 400));
     this.set({ input: "correct-horse" });
   }
@@ -454,7 +454,7 @@ class Shell {
           this.print("VM Bridge stopped.", "The background service starts again at next login, or now with `vmbridge service install`.");
           this.finish(0);
         });
-      case "key":
+      case "password":
         return this.ensureKey(true, () => this.finish(0));
       case "service":
         if (subcommand === "install") {
@@ -489,20 +489,20 @@ class Shell {
     if (this.keySet && !force) return then();
     this.chooseKey(() => {
       this.keySet = true;
-      this.print("Dashboard key saved.");
+      this.print("Password saved.");
       then();
     });
   }
 
   private chooseKey(done: () => void) {
-    this.ask("Choose a dashboard key (at least 8 characters): ", (key) => {
+    this.ask("Choose a dashboard password (at least 8 characters): ", (key) => {
       if (key.length < 8) {
         this.print("Too short.");
         return this.chooseKey(done);
       }
       this.ask("Type it again: ", (again) => {
         if (again === key) return done();
-        this.print("The keys did not match.");
+        this.print("The passwords did not match.");
         this.chooseKey(done);
       });
     });

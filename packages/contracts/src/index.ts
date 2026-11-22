@@ -1,6 +1,6 @@
 // Types shared by the VM Bridge server and its web dashboard. The admin API returns these shapes.
 
-export const providerIds = ["boat", "boxd", "daytona", "instabox", "railway"] as const;
+export const providerIds = ["boat", "boxd", "daytona", "e2b", "freestyle", "instabox", "railway", "superserve"] as const;
 export type ProviderId = (typeof providerIds)[number];
 
 export const vmSizes = ["small", "medium", "large"] as const;
@@ -33,11 +33,24 @@ export interface ProviderInfo {
   fields: ProviderField[];
   features: ProviderFeatures;
   sizes: Record<VmSize, string>;
+  /** The size new VMs get when no setting or rule picks one. */
+  defaultSize: VmSize;
   /** Non-secret field values. Secret fields report only whether they are set. */
   values: Record<string, string>;
   secretsSet: string[];
   configured: boolean;
-  active: boolean;
+  /** Added in Setup, so VM Bridge can create VMs on it. */
+  added: boolean;
+  /** New VMs go here unless a repository rule picks another provider. */
+  isDefault: boolean;
+}
+
+/** Where new VMs for one GitHub repository go. Null fields fall back to the defaults. */
+export interface RepoRule {
+  /** `owner/name` */
+  repo: string;
+  provider: ProviderId | null;
+  size: VmSize | null;
 }
 
 export interface SelectOption {
@@ -93,13 +106,38 @@ export interface VmSession {
   model: string | null;
   provider: string | null;
   status: string;
+  /** A turn is running, queued, or waiting on an approval. */
+  working: boolean;
   updatedAt: string | null;
+}
+
+/** Used and total, in bytes. */
+export interface Usage {
+  used: number;
+  total: number;
+}
+
+/** One reading of an awake VM's resources. A part the VM could not report is null. */
+export interface VmStats {
+  /** When VM Bridge took the reading. */
+  at: number;
+  /** The VM's own memory, or its container's limit when it has one. */
+  memory: Usage | null;
+  /** Share of the last 10 s some task waited on memory (PSI `some avg10`), 0 to 100. Null without PSI. */
+  memoryPressure: number | null;
+  /** CPU use over one second as a share of all cores, 0 to 1. */
+  cpu: { usage: number; cores: number } | null;
+  /** The filesystem holding /workspace. */
+  disk: Usage | null;
+  /** Memory is nearly full or tasks often wait on it. */
+  highMemory: boolean;
 }
 
 export interface VmInfo {
   id: string;
   name: string;
   provider: ProviderId;
+  providerLabel: string;
   sandboxId: string | null;
   size: VmSize;
   sizeLabel: string;
@@ -114,6 +152,50 @@ export interface VmInfo {
   projects: string[];
   sessions: VmSession[];
   t3Version: string | null;
+  /** T3 on the VM has not started with the current sign-ins and environment variables yet. */
+  updatePending: boolean;
+  /** The latest resource reading while the VM is awake. */
+  stats: VmStats | null;
+  /** The VM has not got the installed skills or synced instructions yet. A sleeping VM gets them when it wakes. */
+  skillsPending: boolean;
+}
+
+/** Where an installed skill comes from: skills.sh, or a folder on the machine running VM Bridge. */
+export type SkillSource = "skills.sh" | "local";
+
+/** A skill VM Bridge installs on every VM. */
+export interface SkillInfo {
+  /** Its folder name on the VMs. */
+  name: string;
+  source: SkillSource;
+  /** `owner/repo` for skills.sh, the folder for a local skill. */
+  ref: string;
+  description: string | null;
+  updatedAt: number;
+}
+
+/** A skill found in this machine's Claude Code or Codex skill folders. */
+export interface LocalSkill {
+  name: string;
+  path: string;
+  description: string | null;
+  installed: boolean;
+}
+
+/** An agent's global instructions file found on the machine running VM Bridge. */
+export interface InstructionFile {
+  agent: AgentKind;
+  path: string;
+  /** Every VM gets it, at the path that agent reads. */
+  sync: boolean;
+}
+
+export interface SkillSearchResult {
+  /** `owner/repo` */
+  source: string;
+  skillId: string;
+  name: string;
+  installs: number;
 }
 
 export interface ProjectInfo {
@@ -121,7 +203,8 @@ export interface ProjectInfo {
   title: string;
   url: string;
   branch: string | null;
-  vmId: string | null;
+  /** VMs holding the project, primary first. */
+  vmIds: string[];
   createdAt: number;
 }
 
@@ -154,13 +237,13 @@ export interface AgentProfile {
   error: string | null;
 }
 
-/** A Codex device sign-in in progress. */
 /** A Claude sign-in waiting for the code claude.ai shows after approval. */
 export interface ClaudeLogin {
   id: string;
   url: string;
 }
 
+/** A Codex device sign-in in progress. */
 export interface CodexLogin {
   id: string;
   userCode: string;
@@ -185,7 +268,8 @@ export interface GitHubAccount {
 }
 
 export interface BridgeSettings {
-  vmSize: VmSize;
+  /** Null: each provider's default size. */
+  vmSize: VmSize | null;
   idleMinutes: number;
   t3Version: string | null;
 }
@@ -193,13 +277,22 @@ export interface BridgeSettings {
 export interface Overview {
   bridge: { id: string; version: string; startedAt: number };
   setup: Setup;
-  provider: ProviderInfo | null;
+  /** Added providers, in the order they were added. */
+  providers: ProviderInfo[];
+  defaultProvider: ProviderId | null;
+  repoRules: RepoRule[];
   github: GitHubAccount | null;
   agents: AgentProfile[];
+  /** Names of the environment variables every VM gets. Their values never leave VM Bridge's server. */
+  env: string[];
   settings: BridgeSettings;
   clients: ClientInfo[];
   vms: VmInfo[];
   projects: ProjectInfo[];
+  skills: SkillInfo[];
+  /** Every skill on this machine is installed and kept in sync, not only the ones picked. */
+  syncLocalSkills: boolean;
+  instructions: InstructionFile[];
 }
 
 export interface TrafficEvent {
@@ -221,8 +314,6 @@ export interface PairingUrl {
   kind: AddressKind;
   label: string;
   url: string;
-  /** The `t3code://pair` link that T3 desktop opens and T3 mobile scans. */
-  appLink: string;
 }
 
 export interface CreatedPairing {

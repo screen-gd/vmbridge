@@ -11,6 +11,11 @@ interface BoatEnvironment {
   isDefault: boolean;
 }
 
+interface BoatNamedSnapshot {
+  status: "saving" | "ready" | "failed";
+  error?: string;
+}
+
 interface BoatSandbox {
   id: string;
   name?: string | null;
@@ -55,6 +60,7 @@ export const boatProvider: ProviderDefinition = {
     keepsMemory: false,
   },
   sizes: { small: "2 vCPU, 4 GB", medium: "4 vCPU, 8 GB", large: "8 vCPU, 16 GB" },
+  defaultSize: "small",
 
   open(config) {
     const apiKey = required(config, "apiKey", "Boat API key");
@@ -82,6 +88,14 @@ export const boatProvider: ProviderDefinition = {
 
     const connect = (sandboxId: string): Promise<Box> => connectSandbox(provider, sandboxId, { recoverSecrets: false });
 
+    async function deleteNamed(name: string) {
+      try {
+        await api.request("DELETE", "/named-snapshots/{name}", { params: { name } });
+      } catch (error) {
+        if (!notFound(error)) throw error;
+      }
+    }
+
     return {
       ...base,
 
@@ -98,12 +112,18 @@ export const boatProvider: ProviderDefinition = {
       },
 
       // The SDK creates Boat VMs with `noEnv: true`, which drops the environment, so VM Bridge
-      // creates them through Boat's API and attaches with the SDK.
-      async create(input) {
+      // creates them through Boat's API and attaches with the SDK. A VM from a named snapshot gets the
+      // snapshot's machine type, and `noEnv: false` keeps it from inheriting the snapshot VM's environment choice.
+      async create(input, from) {
         const environment = config.values.environment || undefined;
         const { sandbox } = await api.request<{ sandbox: BoatSandbox }>("POST", "/sandboxes", {
-          headers: { "Idempotency-Key": input.key },
-          body: { type: machines[input.size], ttlSeconds, ...(environment ? { environment, noEnv: false } : {}) },
+          // Apart from the key of a plain create, which follows when a create from a snapshot fails.
+          headers: { "Idempotency-Key": from ? `${input.key}-base` : input.key },
+          body: {
+            ttlSeconds,
+            ...(from ? { from, noEnv: false } : { type: machines[input.size] }),
+            ...(environment ? { environment, noEnv: false } : {}),
+          },
           timeoutMs: 90_000,
         });
         try {
@@ -120,6 +140,28 @@ export const boatProvider: ProviderDefinition = {
       },
 
       connect,
+
+      // The SDK has no Boat snapshots. Boat keeps named snapshots until deleted, at most 10 per account.
+      async snapshot(box) {
+        const name = `vmbridge-base-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+        try {
+          // Inside the try: Boat may save the snapshot even when this request times out.
+          await api.request("POST", "/named-snapshots", { body: { sandboxId: box.id, name }, timeoutMs: 90_000 });
+          const deadline = Date.now() + 10 * 60_000;
+          while (Date.now() < deadline) {
+            const { snapshot } = await api.request<{ snapshot: BoatNamedSnapshot }>("GET", "/named-snapshots/{name}", { params: { name } });
+            if (snapshot.status === "ready") return name;
+            if (snapshot.status === "failed") throw new Error(`Boat could not save the snapshot: ${snapshot.error ?? "no reason given"}.`);
+            await Bun.sleep(2000);
+          }
+          throw new Error("Boat did not finish the snapshot within 10 minutes.");
+        } catch (error) {
+          await deleteNamed(name).catch(() => undefined);
+          throw error;
+        }
+      },
+
+      deleteCheckpoint: deleteNamed,
 
       async states(labels) {
         const states = await base.states(labels);

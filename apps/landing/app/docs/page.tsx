@@ -5,9 +5,19 @@ import { Command, CopyButton } from "@/components/CopyButton";
 import { DocsNav, type DocsSection } from "@/components/DocsNav";
 import { Topology } from "@/components/Topology";
 import { commands, install, providers } from "@/lib/data";
+import { openGraph } from "@/lib/site";
 import { frame } from "@/lib/styles";
 
-export const metadata: Metadata = { title: "Docs" };
+const title = "VM Bridge docs: install, providers, sleep and wake";
+const description =
+  "Install VM Bridge on macOS or Linux, add a cloud provider and pair T3 Code. How VMs sleep and wake, where your data lives, and fixes for common problems.";
+
+export const metadata: Metadata = {
+  title: { absolute: title },
+  description,
+  alternates: { canonical: "/docs" },
+  openGraph: { ...openGraph, url: "/docs", title, description },
+};
 
 const sections: DocsSection[] = [
   { id: "overview", title: "Overview" },
@@ -19,6 +29,9 @@ const sections: DocsSection[] = [
   { id: "sleep", title: "Sleep and wake" },
   { id: "providers", title: "Providers" },
   { id: "sign-in", title: "Agent sign-ins and GitHub" },
+  { id: "env", title: "Environment variables" },
+  { id: "skills", title: "Skills" },
+  { id: "instructions", title: "AGENTS.md" },
   { id: "network", title: "Addresses and Tailscale" },
   { id: "security", title: "Data and security" },
   { id: "troubleshooting", title: "Troubleshooting" },
@@ -120,10 +133,10 @@ export default function Docs() {
               </p>
               <List
                 items={[
-                  "One project per VM. Projects never share a disk, a process list or a shell.",
+                  "Each project has its own VMs. Projects never share a disk, a process list or a shell. A busy project gets more than one.",
                   "A VM sleeps after it has been idle for a set time, and wakes when you send a message.",
-                  "One provider at a time: boxd, Instabox, Daytona, Boat or Railway.",
-                  "Everything is set up from a web dashboard behind one key: provider keys, GitHub, agent sign-ins and device pairing.",
+                  "Several providers at once: boxd, Instabox, Daytona, Boat, Railway, E2B, Freestyle and Superserve. Pick one per repository, or let new VMs use the default.",
+                  "Everything is set up from a web dashboard behind one password: provider keys, GitHub, agent sign-ins and device pairing.",
                   "T3 Code needs no changes. To the app, VM Bridge looks like a single T3 server.",
                 ]}
               />
@@ -136,7 +149,7 @@ export default function Docs() {
               </p>
               <Block>{install}</Block>
               <p>
-                Then run <Code>vmbridge</Code>. It asks for a dashboard key on first run. Run the same command again to update.
+                Then run <Code>vmbridge</Code>. It asks for a dashboard password on first run. Run the same command again to update.
               </p>
               <p>To build from source instead, with Bun 1.4.4 or newer:</p>
               <Block>{`git clone https://github.com/vkpdeveloper/vmbridge
@@ -157,8 +170,8 @@ bun run build          # dist/vmbridge
                 ])}
               />
               <p>
-                On first start, VM Bridge asks for a <strong>dashboard key</strong> of at least 8 characters. On a machine with no terminal, set{" "}
-                <Code>VMBRIDGE_DASHBOARD_KEY</Code> for the first start instead.
+                On first start, VM Bridge asks for a <strong>dashboard password</strong> of at least 8 characters. On a machine with no terminal, set{" "}
+                <Code>VMBRIDGE_PASSWORD</Code> for the first start instead.
               </p>
               <p>
                 Data lives in <Code>~/.vmbridge</Code>. Set <Code>VMBRIDGE_HOME</Code> to move it. The background service uses launchd on macOS and
@@ -169,12 +182,12 @@ bun run build          # dist/vmbridge
 
             <Section id="setup" title="Set up the dashboard">
               <p>
-                Open <Code>/dashboard</Code> on any address VM Bridge printed and log in with your key. Setup has three tabs.
+                Open <Code>/dashboard</Code> on any address VM Bridge printed and log in with your password. Setup has three tabs.
               </p>
               <List
                 items={[
                   <>
-                    <strong>Provider.</strong> Pick a provider and paste its key. VM Bridge checks the key before saving it.
+                    <strong>Providers.</strong> Add one or more providers and paste their keys. VM Bridge checks each key before saving it. The first one you add is the default.
                   </>,
                   <>
                     <strong>GitHub.</strong> A personal access token so agents can clone, push and open pull requests.
@@ -185,8 +198,8 @@ bun run build          # dist/vmbridge
                 ]}
               />
               <p>
-                Under <strong>Settings</strong> you choose the VM size, how many idle minutes before a VM sleeps (5 by default), and the T3 version
-                to install on VMs.
+                Under <strong>Settings</strong> you choose the VM size (by default the closest each provider has to 2 vCPU and 8 GB), how many
+                idle minutes before a VM sleeps (5 by default), and the T3 version to install on VMs. Under <strong>Repositories</strong> you can send a repository to a given provider and VM size.
               </p>
             </Section>
 
@@ -217,12 +230,23 @@ bun run build          # dist/vmbridge
                     <strong>Answered by the bridge.</strong> Config, the project list and threads on sleeping VMs come from VM Bridge in about 1 ms.
                   </>,
                   <>
-                    <strong>Forwarded to a VM.</strong> Messages, file browsing and Git status go to the project&apos;s VM, about 150 to 230 ms away
+                    <strong>Forwarded to a VM.</strong> Messages, file browsing and Git status go to the thread&apos;s VM, about 150 to 230 ms away
                     depending on the provider.
                   </>,
                   <>
                     <strong>New projects.</strong> Opening a repository creates a VM, installs Node, T3 and the agent CLIs, starts T3 and clones the
                     repository. A fresh VM is ready in 16 to 24 seconds, or about a minute on Railway.
+                  </>,
+                  <>
+                    <strong>New threads.</strong> Each goes to one of its project&apos;s VMs with room: fewer than 2 running turns per vCPU, under 80%
+                    of memory used and 3 GB of disk free. An awake VM comes first, then a sleeping one. With no room anywhere, VM Bridge adds a VM
+                    like the project&apos;s first, up to 4. If the provider refuses, the thread runs on the least loaded VM and its setup says it may
+                    be slow.
+                  </>,
+                  <>
+                    <strong>Running threads stay put.</strong> A thread&apos;s worktree, branch and unpushed changes live on its VM, so it never moves.
+                    Branch lists show branches from all of a project&apos;s VMs, and a new thread from a branch only one VM has starts on that VM.
+                    Extra VMs sleep like any other and are never deleted on their own.
                   </>,
                 ]}
               />
@@ -248,8 +272,8 @@ bun run build          # dist/vmbridge
                 ])}
               />
               <p>
-                Each provider also has its own idle limit as a safety net in case VM Bridge is offline. Railway has none, so VM Bridge never sets
-                one there.
+                Each provider also has its own idle or time limit as a safety net in case VM Bridge is offline. Railway has none, so VM Bridge never
+                sets one there.
               </p>
             </Section>
 
@@ -260,7 +284,7 @@ bun run build          # dist/vmbridge
                     <ProviderLogo provider={p} className="size-9 rounded-md ring-white/10" />
                     <div className="min-w-0 text-sm">
                       <div className="font-medium text-foreground">{p.name}</div>
-                      <div>{p.sizes.join(" · ")}</div>
+                      <div>{[...new Set(p.sizes)].join(" · ")}</div>
                       <div className="text-faint">Reached through: {p.reach}</div>
                     </div>
                   </div>
@@ -284,6 +308,13 @@ bun run build          # dist/vmbridge
                   <>
                     <strong>Instabox</strong> uses the agent-browser template.
                   </>,
+                  <>
+                    <strong>E2B</strong> fixes CPU and memory per template. VM Bridge builds one template per size in your account the first time
+                    you use that size, which takes about 15 s.
+                  </>,
+                  <>
+                    <strong>Freestyle</strong> and <strong>Superserve</strong> have one machine size, so small, medium and large are the same VM.
+                  </>,
                 ]}
               />
             </Section>
@@ -297,7 +328,7 @@ bun run build          # dist/vmbridge
                 head={["Sign-in", "Set on the VM as"]}
                 rows={[
                   ["Codex, signed in with ChatGPT", "auth.json in a private CODEX_HOME"],
-                  ["Claude account or subscription token", <Code key="c">CLAUDE_CODE_OAUTH_TOKEN</Code>],
+                  ["Claude account", <Code key="c">CLAUDE_CODE_OAUTH_TOKEN</Code>],
                   ["Claude auth token", <Code key="a">ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL</Code>],
                   ["OpenCode API key", <Code key="o">OPENCODE_API_KEY</Code>],
                   ["GitHub token", <Code key="g">GH_TOKEN, GITHUB_TOKEN</Code>],
@@ -315,6 +346,81 @@ bun run build          # dist/vmbridge
               <p>
                 Signing in with your Claude account makes the same one-year token as <Code>claude setup-token</Code>. Approve on claude.ai, then
                 paste the code it shows into the dashboard.
+              </p>
+            </Section>
+
+            <Section id="env" title="Environment variables">
+              <p>
+                Under <strong>Settings</strong>, <strong>Environment</strong> in the dashboard, add variables every VM gets. T3, the agents and the
+                commands they run see them, and so do login and interactive shells on the VM, such as over SSH.
+              </p>
+              <List
+                items={[
+                  "An awake VM restarts T3 to apply a change as soon as nothing runs on it. A running turn finishes with the values it started with.",
+                  "A sleeping or stopped VM applies it when it wakes, before T3 serves anything.",
+                  "A new VM has them before T3 first starts.",
+                  "VM cards show Update pending until a VM has the latest values.",
+                ]}
+              />
+              <p>
+                Values are kept with VM Bridge&apos;s other secrets and are never shown again: to change one, set it anew. On the VM they live in a
+                file only the VM user can read. Names VM Bridge sets itself, or that would break shells, are refused: for example{" "}
+                <Code>PATH</Code>, <Code>HOME</Code>, <Code>CLAUDE_CONFIG_DIR</Code>, <Code>CODEX_HOME</Code>, <Code>GH_TOKEN</Code> and anything
+                starting with <Code>T3CODE_</Code> or <Code>VMBRIDGE_</Code>.
+              </p>
+            </Section>
+
+            <Section id="skills" title="Skills">
+              <p>
+                Under <strong>Skills</strong> in the dashboard, press <strong>Add skill</strong> to install one from skills.sh, or use the{" "}
+                <strong>This machine</strong> tab to install one found in{" "}
+                <Code>~/.claude/skills</Code>, <Code>~/.agents/skills</Code> or <Code>~/.codex/skills</Code>. Every VM gets every installed skill:
+              </p>
+              <List
+                items={[
+                  "Awake VMs get it right away, even during an agent turn, without restarting T3 or the agents.",
+                  "A sleeping or stopped VM gets it when it wakes, before T3 starts serving.",
+                  "A new VM has every skill before T3 first starts.",
+                  "Edits to a skill on this machine reach the VMs within a few seconds. A skills.sh skill changes only when you press Update.",
+                  "Removing a skill takes it off every VM. Skills put on a VM some other way, and a skill with the same name already there, are left alone.",
+                ]}
+              />
+              <p>
+                Switch on <strong>Sync all</strong> to install every skill in those folders. New skills there follow within a few seconds, and one
+                deleted here comes off the VMs. When two folders hold the same skill name, the first in the order above wins, and skills over 5 MB
+                are skipped. Turning it off keeps what it installed until you remove it. skills.sh skills are not affected.
+              </p>
+              <Table
+                head={["Agent", "Reads skills from"]}
+                rows={[
+                  ["Claude Code", <Code key="c">$CLAUDE_CONFIG_DIR/skills</Code>],
+                  ["Codex", <Code key="x">~/.agents/skills</Code>],
+                ]}
+              />
+              <p>
+                Claude Code picks up new skills in a running session. Codex notices changes on its own; if a skill does not show, start a new
+                thread. skills.sh skills download as text files.
+              </p>
+            </Section>
+
+            <Section id="instructions" title="AGENTS.md">
+              <p>
+                The AGENTS.md tab of the Skills page lists each agent&apos;s global file found on this machine. Switch one on and every VM gets it, at
+                the path that agent reads, on the same terms as skills: awake VMs right away, sleeping VMs before they serve anything on wake, new
+                VMs at setup, and edits here within a few seconds.
+              </p>
+              <Table
+                head={["Agent", "On this machine", "On each VM"]}
+                rows={[
+                  ["Claude Code", <Code key="c">~/.claude/CLAUDE.md</Code>, <Code key="cv">$CLAUDE_CONFIG_DIR/CLAUDE.md</Code>],
+                  ["Codex", <Code key="x">~/.codex/AGENTS.md</Code>, <Code key="xv">$CODEX_HOME/AGENTS.md</Code>],
+                  ["OpenCode", <Code key="o">~/.config/opencode/AGENTS.md</Code>, <Code key="ov">~/.config/opencode/AGENTS.md</Code>],
+                ]}
+              />
+              <p>
+                Only files that exist here are copied, so an agent without one gets none. Switching a file off, or deleting it here, takes it off
+                the VMs. VM Bridge only replaces or removes a file it wrote: a file a VM already had, or one edited on the VM, is left alone. The
+                files stay in memory on this machine and are never logged.
               </p>
             </Section>
 
@@ -358,7 +464,7 @@ bun run build          # dist/vmbridge
                   ["The pairing link does not work", "Links work once and expire after 15 minutes. Create a new one."],
                   ["The T3 server on a VM did not answer", "The VM may be busy or the provider slow. Check the VM on the dashboard canvas, then retry."],
                   ["Waking takes longer than usual", "Stopped VMs (Daytona, Boat) start T3 cold, which adds a few seconds over a paused VM."],
-                  ["The dashboard asks for a key you forgot", <>Run <Code key="k">vmbridge key</Code> on the machine to set a new one.</>],
+                  ["You forgot the dashboard password", <>Run <Code key="k">vmbridge password</Code> on the machine to set a new one.</>],
                 ]}
               />
             </Section>

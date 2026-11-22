@@ -1,4 +1,4 @@
-import type { ProjectRow } from "../store.ts";
+import { primaryVm, type ProjectRow } from "../store.ts";
 import { message } from "../fleet.ts";
 import type { Hub } from "./hub.ts";
 import { projectRoot, repoName } from "./paths.ts";
@@ -24,7 +24,7 @@ export class Clones {
       // A clone cut short by a restart is reported failed, so T3 offers a retry.
       if (snapshot.phase === "running") {
         const project = hub.store.project(projectId);
-        const done = Boolean(project?.checkoutPath);
+        const done = Boolean(project && primaryVm(project)?.checkoutPath);
         this.snapshots.set(projectId, {
           ...snapshot,
           phase: done ? "done" : "failed",
@@ -59,7 +59,7 @@ export class Clones {
     this.hub.store.insertProject(project);
     this.hub.fleet.emit("changed");
     this.hub.emit("shell");
-    return { ...project, vmId: null, checkoutPath: null };
+    return { ...project, vms: [] };
   }
 
   private checkout(project: ProjectRow) {

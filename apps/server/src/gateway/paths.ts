@@ -21,11 +21,28 @@ const within = (path: string, base: string) => path === base || path.startsWith(
 
 export type Direction = "in" | "out";
 
-/** Rewrites paths for one VM: `out` from VM to client, `in` from client to VM. */
-export function translate(value: unknown, vmId: string, direction: Direction, projects: readonly ProjectRow[]): unknown {
-  const checkouts = projects
-    .filter((project) => project.vmId === vmId && project.checkoutPath)
-    .map((project) => ({ vm: project.checkoutPath!, client: projectRoot(project) }));
+/** The environment ID T3 on the VM has, and the one clients know VM Bridge by. */
+export interface Environments {
+  vm: string;
+  client: string;
+}
+
+/**
+ * Rewrites paths for one VM: `out` from VM to client, `in` from client to VM. Thread links in any text, such as
+ * the one an agent writes for a child thread it delegated, name an environment, so they get the other side's.
+ */
+export function translate(value: unknown, vmId: string, direction: Direction, projects: readonly ProjectRow[], environments?: Environments): unknown {
+  // A project on several VMs has the same client root on each, mapped to that VM's own checkout.
+  const checkouts = projects.flatMap((project) =>
+    project.vms.flatMap((entry) => (entry.vmId === vmId && entry.checkoutPath ? [{ vm: entry.checkoutPath, client: projectRoot(project) }] : [])),
+  );
+
+  const [from, to] = direction === "out" ? [environments?.vm, environments?.client] : [environments?.client, environments?.vm];
+  // T3's `t3-thread://v2/<environment>/<thread>` links, and the hosted `/threads/<environment>/<thread>` form.
+  const link = (item: string) =>
+    from && to && item.includes(from)
+      ? item.replaceAll(`t3-thread://v2/${from}/`, `t3-thread://v2/${to}/`).replaceAll(`/threads/${from}/`, `/threads/${to}/`)
+      : item;
 
   const path = (item: string) => {
     for (const checkout of checkouts) {
@@ -38,7 +55,7 @@ export function translate(value: unknown, vmId: string, direction: Direction, pr
   };
 
   const visit = (item: unknown, key: string): unknown => {
-    if (typeof item === "string") return isPathKey(key) ? path(item) : item;
+    if (typeof item === "string") return isPathKey(key) ? path(item) : link(item);
     if (Array.isArray(item)) return item.map((entry) => visit(entry, key));
     if (item && typeof item === "object") {
       return Object.fromEntries(Object.entries(item).map(([name, entry]) => [name, visit(entry, name)]));

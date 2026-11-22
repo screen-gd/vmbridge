@@ -11,6 +11,10 @@ export interface VmRow {
   error: string | null;
   t3Token: string | null;
   t3Version: string | null;
+  /** Fingerprint of the sign-ins the VM's running T3 server started with (see `credentialsFingerprint`). */
+  t3Credentials: string | null;
+  /** Fingerprint of the skills the VM last got (see `skillsFingerprint`). */
+  skills: string | null;
   checkpoint: string | null;
   createdAt: number;
   lastActivityAt: number | null;
@@ -18,22 +22,31 @@ export interface VmRow {
   lastSleptAt: number | null;
 }
 
+/** One VM holding a project. */
+export interface ProjectVm {
+  vmId: string;
+  /** Absolute checkout path on the VM, once cloned. */
+  checkoutPath: string | null;
+}
+
 export interface ProjectRow {
   id: string;
   url: string;
   branch: string | null;
   title: string;
-  vmId: string | null;
-  /** Absolute checkout path on the VM, once cloned. */
-  checkoutPath: string | null;
   createdAt: number;
+  /** VMs holding this project, primary (the first added) first. */
+  vms: ProjectVm[];
 }
 
+/** The VM a project's root path and new automations go to. */
+export const primaryVm = (project: ProjectRow): ProjectVm | undefined => project.vms[0];
+
 const vmColumns = `id, provider, sandbox_id AS sandboxId, name, size, state, error, t3_token AS t3Token,
-  t3_version AS t3Version, checkpoint, created_at AS createdAt, last_activity_at AS lastActivityAt,
+  t3_version AS t3Version, t3_credentials AS t3Credentials, skills, checkpoint, created_at AS createdAt, last_activity_at AS lastActivityAt,
   last_connected_at AS lastConnectedAt, last_slept_at AS lastSleptAt`;
 
-const projectColumns = `id, url, branch, title, vm_id AS vmId, checkout_path AS checkoutPath, created_at AS createdAt`;
+const projectColumns = `id, url, branch, title, created_at AS createdAt`;
 
 const vmFields = {
   sandboxId: "sandbox_id",
@@ -41,6 +54,8 @@ const vmFields = {
   error: "error",
   t3Token: "t3_token",
   t3Version: "t3_version",
+  t3Credentials: "t3_credentials",
+  skills: "skills",
   checkpoint: "checkpoint",
   lastActivityAt: "last_activity_at",
   lastConnectedAt: "last_connected_at",
@@ -49,9 +64,21 @@ const vmFields = {
 
 type VmUpdate = Partial<Pick<VmRow, keyof typeof vmFields>>;
 
-const projectFields = { vmId: "vm_id", checkoutPath: "checkout_path", branch: "branch", title: "title" } as const;
+const projectFields = { branch: "branch", title: "title" } as const;
 
 type ProjectUpdate = Partial<Pick<ProjectRow, keyof typeof projectFields>>;
+
+/** The snapshot new VMs of one provider and size start from. */
+export interface BaseSnapshot {
+  snapshot: string | null;
+  /** `setupStamp` of what the snapshot holds. */
+  stamp: string | null;
+  createdAt: number | null;
+  /** The sandbox building the next snapshot, kept until it is deleted so a build cut short by a restart is cleaned up. */
+  builder: string | null;
+}
+
+const baseFields = { snapshot: "snapshot", stamp: "stamp", createdAt: "created_at", builder: "builder" } as const;
 
 /** JSON caches of what each VM's T3 server last reported, kept so sleeping VMs still render. */
 type SnapshotKind = "shell" | "config" | "scheduled_tasks";
@@ -90,17 +117,78 @@ export class Store {
     if (sql) this.db.query(`UPDATE vms SET ${sql} WHERE id = ?`).run(...values, id);
   }
 
-  /** Forgets a VM. Its projects stay and get a fresh VM next time they are used. */
+  base(provider: ProviderId, size: VmSize): BaseSnapshot | null {
+    return this.db
+      .query<BaseSnapshot, [string, string]>(
+        "SELECT snapshot, stamp, created_at AS createdAt, builder FROM base_snapshots WHERE provider = ? AND size = ?",
+      )
+      .get(provider, size);
+  }
+
+  bases(provider: ProviderId): (BaseSnapshot & { size: VmSize })[] {
+    return this.db
+      .query<BaseSnapshot & { size: VmSize }, [string]>(
+        "SELECT size, snapshot, stamp, created_at AS createdAt, builder FROM base_snapshots WHERE provider = ?",
+      )
+      .all(provider);
+  }
+
+  /** Build VMs on record, of one provider or all. */
+  builders(provider?: ProviderId): { provider: ProviderId; size: VmSize; builder: string }[] {
+    return this.db
+      .query<{ provider: ProviderId; size: VmSize; builder: string }, [string | null]>(
+        "SELECT provider, size, builder FROM base_snapshots WHERE builder IS NOT NULL AND (?1 IS NULL OR provider = ?1)",
+      )
+      .all(provider ?? null);
+  }
+
+  saveBase(provider: ProviderId, size: VmSize, update: Partial<BaseSnapshot>) {
+    const { sql, values } = assignments(baseFields, update);
+    this.db.query("INSERT INTO base_snapshots (provider, size) VALUES (?, ?) ON CONFLICT DO NOTHING").run(provider, size);
+    if (sql) this.db.query(`UPDATE base_snapshots SET ${sql} WHERE provider = ? AND size = ?`).run(...values, provider, size);
+  }
+
+  deleteBase(provider: ProviderId, size: VmSize) {
+    this.db.query("DELETE FROM base_snapshots WHERE provider = ? AND size = ?").run(provider, size);
+  }
+
+  retiredSnapshots(provider: ProviderId): string[] {
+    return this.db
+      .query<{ snapshot: string }, [string]>("SELECT snapshot FROM retired_snapshots WHERE provider = ?")
+      .all(provider)
+      .map((row) => row.snapshot);
+  }
+
+  retireSnapshot(provider: ProviderId, snapshot: string) {
+    this.db.query("INSERT INTO retired_snapshots (provider, snapshot) VALUES (?, ?) ON CONFLICT DO NOTHING").run(provider, snapshot);
+  }
+
+  forgetRetired(provider: ProviderId, snapshot: string) {
+    this.db.query("DELETE FROM retired_snapshots WHERE provider = ? AND snapshot = ?").run(provider, snapshot);
+  }
+
+  /** Forgets a VM. Its projects stay, on their other VMs or a fresh one next time they are used. */
   deleteVm(id: string) {
-    this.db.transaction(() => {
-      this.db.query("UPDATE projects SET checkout_path = NULL WHERE vm_id = ?").run(id);
-      this.db.query("DELETE FROM vms WHERE id = ?").run(id);
-    })();
+    // Its project_vms rows go with it (ON DELETE CASCADE).
+    this.db.query("DELETE FROM vms WHERE id = ?").run(id);
     this.projectCache = null;
   }
 
   projects(): readonly ProjectRow[] {
-    this.projectCache ??= this.db.query<ProjectRow, []>(`SELECT ${projectColumns} FROM projects ORDER BY created_at`).all();
+    if (!this.projectCache) {
+      const links = this.db
+        .query<ProjectVm & { projectId: string }, []>(
+          "SELECT project_id AS projectId, vm_id AS vmId, checkout_path AS checkoutPath FROM project_vms ORDER BY added_at, rowid",
+        )
+        .all();
+      this.projectCache = this.db
+        .query<Omit<ProjectRow, "vms">, []>(`SELECT ${projectColumns} FROM projects ORDER BY created_at`)
+        .all()
+        .map((project) => ({
+          ...project,
+          vms: links.filter((link) => link.projectId === project.id).map(({ vmId, checkoutPath }) => ({ vmId, checkoutPath })),
+        }));
+    }
     return this.projectCache;
   }
 
@@ -108,7 +196,7 @@ export class Store {
     return this.projects().find((project) => project.id === id) ?? null;
   }
 
-  insertProject(project: Omit<ProjectRow, "vmId" | "checkoutPath">) {
+  insertProject(project: Omit<ProjectRow, "vms">) {
     this.db
       .query("INSERT INTO projects (id, url, branch, title, created_at) VALUES (?, ?, ?, ?, ?)")
       .run(project.id, project.url, project.branch, project.title, project.createdAt);
@@ -118,6 +206,37 @@ export class Store {
   updateProject(id: string, update: ProjectUpdate) {
     const { sql, values } = assignments(projectFields, update);
     if (sql) this.db.query(`UPDATE projects SET ${sql} WHERE id = ?`).run(...values, id);
+    this.projectCache = null;
+  }
+
+  /** Adds a VM to a project, after its existing ones. */
+  addProjectVm(projectId: string, vmId: string) {
+    this.db
+      .query("INSERT OR IGNORE INTO project_vms (project_id, vm_id, added_at) VALUES (?, ?, ?)")
+      .run(projectId, vmId, Date.now());
+    this.projectCache = null;
+  }
+
+  setCheckout(projectId: string, vmId: string, checkoutPath: string) {
+    this.db.query("UPDATE project_vms SET checkout_path = ? WHERE project_id = ? AND vm_id = ?").run(checkoutPath, projectId, vmId);
+    this.projectCache = null;
+  }
+
+  /** The local branches a project's checkout on a VM had when VM Bridge last read them. */
+  branches(projectId: string, vmId: string): string[] {
+    const row = this.db
+      .query<{ branches: string | null }, [string, string]>("SELECT branches FROM project_vms WHERE project_id = ? AND vm_id = ?")
+      .get(projectId, vmId);
+    return row?.branches ? (JSON.parse(row.branches) as string[]) : [];
+  }
+
+  setBranches(projectId: string, vmId: string, branches: readonly string[]) {
+    this.db.query("UPDATE project_vms SET branches = ? WHERE project_id = ? AND vm_id = ?").run(JSON.stringify(branches), projectId, vmId);
+  }
+
+  /** Takes a VM away from every project it held, such as when the provider lost it. */
+  removeVmFromProjects(vmId: string) {
+    this.db.query("DELETE FROM project_vms WHERE vm_id = ?").run(vmId);
     this.projectCache = null;
   }
 
@@ -212,5 +331,25 @@ export class Store {
         "INSERT INTO clones (project_id, snapshot) VALUES (?, ?) ON CONFLICT (project_id) DO UPDATE SET snapshot = excluded.snapshot",
       )
       .run(projectId, JSON.stringify(snapshot));
+  }
+
+  /** Thread commands applied while their VM was away, waiting to be replayed on it. Oldest first. */
+  heldCommands(vmId: string) {
+    return this.db
+      .query<{ id: string; payload: string; createdAt: number }, [string]>(
+        "SELECT id, payload, created_at AS createdAt FROM held_commands WHERE vm_id = ? ORDER BY created_at, rowid",
+      )
+      .all(vmId)
+      .map((row) => ({ id: row.id, payload: JSON.parse(row.payload) as Record<string, unknown>, createdAt: row.createdAt }));
+  }
+
+  holdCommand(id: string, vmId: string, payload: unknown, createdAt: number) {
+    this.db
+      .query("INSERT OR IGNORE INTO held_commands (id, vm_id, payload, created_at) VALUES (?, ?, ?, ?)")
+      .run(id, vmId, JSON.stringify(payload), createdAt);
+  }
+
+  dropHeldCommand(id: string) {
+    this.db.query("DELETE FROM held_commands WHERE id = ?").run(id);
   }
 }

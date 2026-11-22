@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * Personal details (emails, accounts, addresses) stay blurred until clicked, so the dashboard
+ * Private values, like email addresses and base URLs, stay blurred until clicked, so the dashboard
  * is safe on a shared screen. An inline span keeps the parent's truncation working.
  */
 export function Private({ children, className }: { children: ReactNode; className?: string }) {

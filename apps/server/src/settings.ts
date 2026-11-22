@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
-import type { AgentKind, GitHubAccount, ProviderId, VmSize } from "@vmbridge/contracts";
+import type { AgentKind, GitHubAccount, ProviderId, RepoRule, VmSize } from "@vmbridge/contracts";
+import type { ServerConfig } from "./gateway/types.ts";
 
 export interface ProviderPreference {
   enabled?: boolean;
@@ -10,10 +11,15 @@ interface SettingValues {
   /** Stable T3 environment identity. Never changes once created. */
   bridgeId: string;
   dashboardKeyHash: string | null;
-  activeProvider: ProviderId | null;
+  /** Providers added in Setup, in order. VMs on a removed provider keep running but get no new VMs beside them. */
+  providers: ProviderId[];
+  /** One of `providers`. New VMs go here unless a repository rule picks another. */
+  defaultProvider: ProviderId | null;
+  repoRules: RepoRule[];
   /** Non-secret provider fields, such as a Boat environment name. Secrets live in the secrets table. */
   providerOptions: Partial<Record<ProviderId, Record<string, string>>>;
-  vmSize: VmSize;
+  /** Null: each provider's own default size (see `ProviderDefinition.defaultSize`). */
+  vmSize: VmSize | null;
   idleMinutes: number;
   /** Exact npm `t3` version for new VMs; null resolves the latest release when a VM is created. */
   t3Version: string | null;
@@ -25,20 +31,31 @@ interface SettingValues {
   agentPreferences: Record<string, ProviderPreference>;
   /** The sign-in profile each agent uses on every VM. Profiles live under `<data dir>/auths`. */
   agentProfiles: Partial<Record<AgentKind, string>>;
+  /** Agents whose global instructions file on this machine every VM gets. */
+  instructionSync: Partial<Record<AgentKind, boolean>>;
+  /** Every skill in this machine's skill folders is installed, and removed when its folder goes. */
+  syncLocalSkills: boolean;
+  /** T3's config from the last VM removed, kept while no VM has one (see `Hub.forget`). */
+  fallbackConfig: { vmId: string; config: ServerConfig } | null;
 }
 
 const defaults: { [K in keyof SettingValues]: () => SettingValues[K] } = {
   bridgeId: () => crypto.randomUUID(),
   dashboardKeyHash: () => null,
-  activeProvider: () => null,
+  providers: () => [],
+  defaultProvider: () => null,
+  repoRules: () => [],
   providerOptions: () => ({}),
-  vmSize: () => "medium",
+  vmSize: () => null,
   idleMinutes: () => 5,
   t3Version: () => null,
   github: () => null,
   shellSequence: () => 0,
   agentPreferences: () => ({}),
   agentProfiles: () => ({}),
+  instructionSync: () => ({}),
+  syncLocalSkills: () => false,
+  fallbackConfig: () => null,
 };
 
 export class Settings {
@@ -80,3 +97,8 @@ export class Secrets {
     }
   }
 }
+
+/** Environment variables every VM gets, set in the dashboard. Kept as one secret, since the values are secrets too. */
+export const envVars = (secrets: Secrets): Record<string, string> => JSON.parse(secrets.get("env") ?? "{}");
+
+export const saveEnvVars = (secrets: Secrets, vars: Record<string, string>) => secrets.set("env", Object.keys(vars).length ? JSON.stringify(vars) : null);

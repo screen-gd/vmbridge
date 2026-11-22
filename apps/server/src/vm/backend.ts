@@ -147,7 +147,7 @@ export class Backend {
     };
   }
 
-  /** A request with a single result. */
+  /** A request with a single result. Rejects with `T3Rejected` only when T3 itself answered with a failure. */
   call<T>(tag: string, payload: unknown, timeoutMs = 60_000): Promise<T> {
     return new Promise((resolve, reject) => {
       let cancel = () => {};
@@ -161,7 +161,8 @@ export class Backend {
           clearTimeout(timer);
           const { exit } = frame as Exit;
           if (exit._tag === "Success") resolve(exit.value as T);
-          else reject(new Error(`T3 ${tag} failed on VM ${this.vmId}.`));
+          // A closed socket fails its open requests too; that is not T3's answer.
+          else reject(this.open ? new T3Rejected(tag, this.vmId) : new Error(`VM ${this.vmId} disconnected during T3 ${tag}.`));
         });
       } catch (error) {
         clearTimeout(timer);
@@ -187,6 +188,12 @@ export class Backend {
       });
       socket.close();
     });
+  }
+}
+
+export class T3Rejected extends Error {
+  constructor(tag: string, vmId: string) {
+    super(`T3 ${tag} failed on VM ${vmId}.`);
   }
 }
 

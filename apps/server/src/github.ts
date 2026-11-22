@@ -34,3 +34,15 @@ export async function fetchGitHubAccount(token: string): Promise<GitHubAccount> 
     checkedAt: Date.now(),
   };
 }
+
+/** `owner/name` of repositories the token can reach, most recently pushed first. */
+export async function fetchGitHubRepos(token: string): Promise<string[]> {
+  const response = await fetch("https://api.github.com/user/repos?per_page=100&sort=pushed", {
+    headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}`, "x-github-api-version": "2022-11-28" },
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => {
+    throw new GitHubRejected("Could not reach GitHub.");
+  });
+  if (!response.ok) throw new GitHubRejected(`GitHub answered ${response.status}.`);
+  return ((await response.json()) as { full_name: string }[]).map((repo) => repo.full_name);
+}

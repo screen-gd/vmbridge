@@ -148,6 +148,8 @@ export class T3Gateway {
     const access = this.clients.exchange(body.get("subject_token") ?? "");
     if (!access) return json({ error: "invalid_grant" }, 400);
     this.hub.traffic.record({ kind: "system", operation: "Device paired" });
+    // The dashboard's device list follows fleet changes.
+    this.hub.fleet.emit("changed");
     return json({
       access_token: access,
       issued_token_type: tokenExchange.requested,
@@ -159,7 +161,7 @@ export class T3Gateway {
 
   /** Thread reads: from the VM when it is awake, from the cached transcript while it sleeps. */
   private async thread(threadId: string, view: string | undefined, url: URL) {
-    const vmId = this.hub.route({ threadId });
+    const vmId = await this.hub.routeSoon({ threadId });
     const backend = this.hub.fleet.backend(vmId);
     if (!backend) {
       const cached = this.hub.sleepingProjection(threadId);
@@ -187,6 +189,7 @@ export class T3Gateway {
     open: (socket) => {
       this.sockets.add(socket);
       this.hub.traffic.record({ kind: "system", operation: "Device connected", clientId: socket.data.clientId });
+      this.hub.fleet.emit("changed");
     },
     message: (socket, raw) => {
       if (!this.clients.valid(socket.data.clientId)) return socket.close(1008, "Session expired");
@@ -202,6 +205,7 @@ export class T3Gateway {
         send: (frame) => {
           if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame));
         },
+        open: () => socket.readyState === WebSocket.OPEN && this.clients.valid(socket.data.clientId),
       };
       for (const frame of Array.isArray(decoded) ? decoded : [decoded]) {
         this.rpc.handle(client, frame as Frame).catch(() => socket.close(1008, "Invalid RPC message"));
@@ -211,6 +215,7 @@ export class T3Gateway {
       this.sockets.delete(socket);
       for (const cancel of socket.data.cancels.values()) cancel();
       socket.data.cancels.clear();
+      this.hub.fleet.emit("changed");
     },
   };
 

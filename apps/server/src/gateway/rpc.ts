@@ -1,7 +1,9 @@
 import type { Traffic } from "../traffic.ts";
 import { message, NoProvider } from "../fleet.ts";
+import { primaryVm } from "../store.ts";
 import type { Frame } from "../vm/backend.ts";
 import type { Clones } from "./clones.ts";
+import { heldCommandTypes } from "./held.ts";
 import type { Hub } from "./hub.ts";
 import { projectForPath, projectRoot } from "./paths.ts";
 import { githubName, githubRepository, type RemoteBranches } from "./repos.ts";
@@ -11,12 +13,17 @@ import { str, type Wire } from "./types.ts";
 export interface RpcClient {
   readonly clientId: string;
   send(frame: Wire): void;
+  /** False once the socket closed or the device lost its access. */
+  open(): boolean;
   /** Interrupt handlers for this client's open requests, by request ID. */
   readonly cancels: Map<string, () => void>;
 }
 
+/** Echoed back with the type it arrived as: newer T3 clients send numbers and match replies by value. */
+type RequestId = string | number;
+
 interface Call {
-  id: string;
+  id: RequestId;
   tag: string;
   payload: Wire;
   client: RpcClient;
@@ -24,13 +31,13 @@ interface Call {
   forwarded?: boolean;
 }
 
-const success = (requestId: string, value: unknown) => ({ _tag: "Exit", requestId, exit: { _tag: "Success", value } });
-const defect = (requestId: string, text: string) => ({
+const success = (requestId: RequestId, value: unknown) => ({ _tag: "Exit", requestId, exit: { _tag: "Success", value } });
+const defect = (requestId: RequestId, text: string) => ({
   _tag: "Exit",
   requestId,
   exit: { _tag: "Failure", cause: [{ _tag: "Die", defect: text }] },
 });
-const tagged = (requestId: string, error: Wire) => ({
+const tagged = (requestId: RequestId, error: Wire) => ({
   _tag: "Exit",
   requestId,
   exit: { _tag: "Failure", cause: [{ _tag: "Fail", error }] },
@@ -80,6 +87,7 @@ export class Rpc {
         }
       },
       "server.refreshProviders": async (call) => this.reply(call, { providers: await hub.refreshAgents(call.payload) }),
+      "server.updateProvider": async (call) => this.reply(call, { providers: await hub.updateAgent(call.payload) }),
       subscribeServerConfig: (call) => this.stream(call, "config", () => ({ version: 1, type: "snapshot", config: this.config() })),
       "orchestration.subscribeShell": (call) => this.stream(call, "shell", () => ({ kind: "snapshot", snapshot: hub.shell() })),
       "scheduledTasks.subscribe": (call) => this.stream(call, "scheduledTasks", () => hub.scheduledTasks()),
@@ -121,7 +129,7 @@ export class Rpc {
       },
       "filesystem.browse": (call) => this.browse(call),
       "filesystem.getMetadata": (call) => this.metadata(call),
-      "vcs.listRefs": (call) => this.vcsFallback(call),
+      "vcs.listRefs": (call) => this.listRefs(call),
       "vcs.refreshStatus": (call) => this.vcsFallback(call),
       "vcs.refreshBranch": (call) => this.vcsFallback(call),
       subscribeVcsBranch: (call) => this.vcsSubscription(call),
@@ -142,7 +150,7 @@ export class Rpc {
     if (frame._tag !== "Request" || !["string", "number"].includes(typeof frame.id) || typeof frame.tag !== "string") {
       throw new Error("Invalid RPC frame.");
     }
-    const call: Call = { id: String(frame.id), tag: frame.tag, payload: (frame.payload ?? {}) as Wire, client };
+    const call: Call = { id: frame.id as RequestId, tag: frame.tag, payload: (frame.payload ?? {}) as Wire, client };
     const started = performance.now();
     const local = this.local[call.tag];
     try {
@@ -167,6 +175,8 @@ export class Rpc {
       client.send(tagged(id, { _tag: "OrchestrationV2ThreadLaunchError", commandId: payload.commandId, projectId: payload.projectId, message: text }));
     } else if (tag === "orchestration.dispatchCommand" && typeof payload.commandId === "string" && typeof payload.type === "string") {
       client.send(tagged(id, { _tag: "OrchestrationV2DispatchCommandError", commandId: payload.commandId, commandType: payload.type, message: text }));
+    } else if (tag === "server.updateProvider") {
+      client.send(tagged(id, { _tag: "ServerProviderUpdateError", provider: str(payload.provider) ?? "unknown", reason: text }));
     } else if (tag.startsWith("scheduledTasks.")) {
       client.send(tagged(id, { _tag: "ScheduledTaskError", message: text, ...(typeof payload.id === "string" ? { taskId: payload.id } : {}) }));
     } else client.send(defect(id, text));
@@ -178,10 +188,21 @@ export class Rpc {
 
   /** Sends `value()` now and again on every `event`, until the client interrupts. */
   private stream(call: Call, event: StreamEvent, value: () => unknown) {
-    const push = () => this.chunk(call, value());
+    const id = String(call.id);
+    const first = value();
+    const push = () => {
+      try {
+        this.chunk(call, value());
+      } catch (error) {
+        // Thrown into the emitter, this would fail whoever emitted the event. End this stream instead.
+        this.hub.off(event, push);
+        call.client.cancels.delete(id);
+        this.fail(call, error);
+      }
+    };
     this.hub.on(event, push);
-    call.client.cancels.set(call.id, () => this.hub.off(event, push));
-    push();
+    call.client.cancels.set(id, () => this.hub.off(event, push));
+    this.chunk(call, first);
     if (call.payload.requestCompletionMarker) this.chunk(call, { kind: "synchronized" });
   }
 
@@ -189,7 +210,7 @@ export class Rpc {
     if (!this.hub.hasConfig()) {
       // T3 needs one VM's config before it can show anything. Start one now.
       void this.hub.fleet.any().catch(() => {});
-      if (!this.hub.settings.get("activeProvider")) throw new NoProvider();
+      if (!this.hub.settings.get("defaultProvider")) throw new NoProvider();
     }
     return this.hub.config() as Wire & { settings?: Wire };
   }
@@ -281,12 +302,58 @@ export class Rpc {
     this.reply(call, { entries });
   }
 
-  /** The project a request's `cwd` points into, when its VM cannot answer right now. */
+  /** The project a request's `cwd` points into, when its primary VM cannot answer right now. */
   private unreachableProject(call: Call) {
     const cwd = str(call.payload.cwd);
     const project = cwd ? projectForPath(cwd, this.hub.projects()) : undefined;
-    if (!project || (project.vmId && project.checkoutPath && this.hub.fleet.backend(project.vmId))) return undefined;
+    const primary = project && primaryVm(project);
+    if (!project || (primary?.checkoutPath && this.hub.fleet.backend(primary.vmId))) return undefined;
     return { project, cwd: cwd! };
+  }
+
+  /**
+   * A project's branches come from its primary VM, followed by the local branches only its other VMs have, so a
+   * branch made on any of them can start a new thread, which placement then puts on a VM that has it.
+   */
+  private async listRefs(call: Call) {
+    const cwd = str(call.payload.cwd);
+    const project = cwd ? projectForPath(cwd, this.hub.projects()) : undefined;
+    const primary = project && primaryVm(project);
+    if (!project || !primary || project.vms.length < 2 || call.payload.refKind === "remote") return this.vcsFallback(call);
+    const query = (str(call.payload.query) ?? "").toLowerCase();
+    const elsewhere = [...(await this.hub.sparseBranches(project.id))]
+      .filter(([name, vms]) => !vms.has(primary.vmId) && name.toLowerCase().includes(query))
+      .map(([name]) => name)
+      .sort();
+    if (!elsewhere.length) return this.vcsFallback(call);
+    const backend = primary.checkoutPath ? this.hub.fleet.backend(primary.vmId) : undefined;
+    let listed: Wire;
+    if (backend) {
+      const vmId = primary.vmId;
+      const exit = await new Promise<Frame>((resolve, reject) => {
+        try {
+          backend.request(call.tag, this.hub.into(call.payload, vmId), (frame) => frame._tag === "Exit" && resolve(frame));
+        } catch (error) {
+          reject(error);
+        }
+      });
+      if ((exit.exit as Wire | undefined)?._tag !== "Success") return call.client.send({ ...(this.hub.out(exit, vmId) as Wire), requestId: call.id });
+      listed = this.hub.out((exit.exit as Wire).value, vmId) as Wire;
+    } else {
+      // The primary is asleep: its part comes from the remote, as for a project on one VM.
+      const remote = await this.branches.refs(project, call.payload).catch(() => null);
+      if (!remote) return this.vcsFallback(call);
+      listed = remote;
+    }
+    const refs = (listed.refs as Wire[] | undefined) ?? [];
+    const shown = new Set(refs.map((ref) => ref.name));
+    const extra = elsewhere.filter((name) => !shown.has(name)).map((name) => ({ name, current: false, isDefault: false, worktreePath: null }));
+    // They follow the primary's last page, so earlier pages and cursors stay as the primary gave them.
+    this.reply(call, {
+      ...listed,
+      refs: listed.nextCursor == null ? [...refs, ...extra] : refs,
+      totalCount: Number(listed.totalCount ?? 0) + extra.length,
+    });
   }
 
   private async vcsFallback(call: Call) {
@@ -306,7 +373,10 @@ export class Rpc {
     }
   }
 
-  /** VCS streams follow their VM: native while it is awake, VM Bridge's own answer while it sleeps. */
+  /**
+   * VCS streams follow their VM: native while it is awake, VM Bridge's own answer while it sleeps. A project
+   * root path follows the primary VM.
+   */
   private async vcsSubscription(call: Call) {
     const cwd = str(call.payload.cwd);
     const project = cwd ? projectForPath(cwd, this.hub.projects()) : undefined;
@@ -319,8 +389,9 @@ export class Rpc {
       upstream?.();
       upstream = undefined;
       const current = project ? this.hub.store.project(project.id) : null;
-      const vmId = current?.vmId ?? routed;
-      const backend = vmId && (!current || current.checkoutPath) ? this.hub.fleet.backend(vmId) : undefined;
+      const primary = current ? primaryVm(current) : undefined;
+      const vmId = current ? primary?.vmId : routed;
+      const backend = vmId && (!current || primary?.checkoutPath) ? this.hub.fleet.backend(vmId) : undefined;
       if (backend && vmId) {
         upstream = backend.request(call.tag, this.hub.into(call.payload, vmId), (frame) => {
           if (closed || serial !== generation || frame._tag === "Exit") return;
@@ -334,7 +405,7 @@ export class Rpc {
     };
     const onLifecycle = (vmId: string) => {
       const current = project ? this.hub.store.project(project.id) : null;
-      if ((current?.vmId ?? routed) === vmId) void update().catch(() => {});
+      if ((current ? primaryVm(current)?.vmId : routed) === vmId) void update().catch(() => {});
     };
     this.hub.on("awake", onLifecycle);
     this.hub.on("offline", onLifecycle);
@@ -344,12 +415,12 @@ export class Rpc {
       this.hub.off("awake", onLifecycle);
       this.hub.off("offline", onLifecycle);
     };
-    call.client.cancels.set(call.id, cancel);
+    call.client.cancels.set(String(call.id), cancel);
     try {
       await update();
     } catch (error) {
       cancel();
-      call.client.cancels.delete(call.id);
+      call.client.cancels.delete(String(call.id));
       throw error;
     }
   }
@@ -374,7 +445,7 @@ export class Rpc {
             if (!snapshot) continue;
             // Continue the sequence from VM Bridge's own snapshots.
             nativeBase ??= Number(this.hub.setupSnapshot(threadId)?.sequence ?? -1) + 1;
-            this.chunk(call, { ...(this.hub.out(snapshot, vmId) as Wire), sequence: nativeBase + Number(snapshot.sequence) });
+            this.chunk(call, { ...this.hub.withBusyNotice(threadId, this.hub.out(snapshot, vmId) as Wire), sequence: nativeBase + Number(snapshot.sequence) });
           }
         });
         attached = backend;
@@ -386,7 +457,7 @@ export class Rpc {
     const onAwake = (vmId: string) => this.hub.store.threadVm(threadId) === vmId && update();
     this.hub.on("setup", onSetup);
     this.hub.on("awake", onAwake);
-    call.client.cancels.set(call.id, () => {
+    call.client.cancels.set(String(call.id), () => {
       this.hub.off("setup", onSetup);
       this.hub.off("awake", onAwake);
       upstream?.();
@@ -395,11 +466,23 @@ export class Rpc {
   }
 
   /** A thread stream: live from the VM when awake, the cached transcript while it sleeps. */
-  private subscribeThread(call: Call) {
+  private async subscribeThread(call: Call) {
     const threadId = String(call.payload.threadId);
-    const vmId = this.hub.route(call.payload);
+    const requestId = String(call.id);
     let end: (() => void) | undefined;
     let closed = false;
+    // Routing can wait for a shell update, and a cancel or disconnect in that time must still stop the stream.
+    call.client.cancels.set(requestId, () => {
+      closed = true;
+    });
+    let vmId: string;
+    try {
+      vmId = await this.hub.routeSoon(call.payload);
+    } catch (error) {
+      call.client.cancels.delete(requestId);
+      throw error;
+    }
+    if (closed || !call.client.open()) return;
     const attach = () => {
       const backend = this.hub.fleet.backend(vmId);
       if (!backend || closed) return;
@@ -440,11 +523,11 @@ export class Rpc {
       this.hub.off("awake", onAwake);
       this.hub.off("wake", onWake);
     };
-    call.client.cancels.set(call.id, cancel);
+    call.client.cancels.set(String(call.id), cancel);
     if (this.hub.fleet.backend(vmId)) return attach();
     if (!sleepingSnapshot()) {
       cancel();
-      call.client.cancels.delete(call.id);
+      call.client.cancels.delete(String(call.id));
       throw new Error("This thread's VM is asleep and has no saved transcript. Send a message to wake it.");
     }
     if (call.payload.requestCompletionMarker) this.chunk(call, { kind: "synchronized" });
@@ -462,6 +545,10 @@ export class Rpc {
     }
     if (scheduled && (payload.schedule as Wire | undefined)?.type === "webhook") {
       throw new Error("Webhook automations need a directly reachable T3 server.");
+    }
+    if (tag === "orchestration.dispatchCommand" && heldCommandTypes.has(String(payload.type))) {
+      const sequence = this.hub.holdCommand(payload);
+      if (sequence !== null) return this.reply(call, { sequence });
     }
     const mutating = scheduled || tag === "orchestration.launchThread" || tag === "orchestration.dispatchCommand" || mutation.test(tag);
     const launching = tag === "orchestration.launchThread" ? str(payload.threadId) : undefined;
@@ -494,6 +581,12 @@ export class Rpc {
     } finally {
       wakeNotice?.();
     }
+    // Placement and waking can take minutes. A device that left or was removed meanwhile gets nothing run for it.
+    if (!client.open()) {
+      release();
+      if (launching) this.hub.reportSetup(launching, "The launch was interrupted.", "failed");
+      return;
+    }
     progress("Preparing the workspace");
 
     const started = performance.now();
@@ -505,7 +598,7 @@ export class Rpc {
         if (frame._tag !== "Exit") return;
         done = true;
         release();
-        client.cancels.delete(call.id);
+        client.cancels.delete(String(call.id));
         const ok = (frame.exit as Wire | undefined)?._tag === "Success";
         this.traffic.record({ kind: "rpc", operation: tag, clientId: client.clientId, vmId, status: ok ? "ok" : "error", durationMs: Math.round(performance.now() - started) });
         if (launching) this.hub.reportSetup(launching, ok ? "Workspace handed to T3" : "T3 could not start the thread.", ok ? "done" : "failed");
@@ -516,7 +609,7 @@ export class Rpc {
     }
     call.forwarded = true;
     if (!done) {
-      client.cancels.set(call.id, () => {
+      client.cancels.set(String(call.id), () => {
         release();
         stop();
         if (launching) this.hub.reportSetup(launching, "The launch was interrupted.", "failed");

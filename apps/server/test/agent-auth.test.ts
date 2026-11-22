@@ -7,7 +7,7 @@ import type { CodexAuthFile } from "../src/agent-auth/codex.ts";
 import { openDatabase } from "../src/db.ts";
 import { Settings } from "../src/settings.ts";
 import { prepareVm } from "../src/vm/runtime.ts";
-import type { Box } from "../src/providers/index.ts";
+import { recordingBox } from "./vm-program.ts";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -178,20 +178,24 @@ describe("Codex sign-in", () => {
     expect(auth.codexDue()).toBe(false);
     expect(JSON.parse((await auth.vmSecrets()).codexAuthJson!).tokens.refresh_token).toBe("from-vm");
   });
+
+  test("VMs tell a new Codex sign-in apart from a token refresh", async () => {
+    const { auth } = setup();
+    await signInCodex(auth, codexFile("acct-1", "refresh-1", day));
+    const first = (await auth.vmSecrets()).codexSignIn;
+    fakeFetch(() => Response.json(codexFile("acct-1", "refresh-2", 10 * day).tokens));
+    await auth.refreshCodex(true);
+    expect((await auth.vmSecrets()).codexSignIn).toBe(first!);
+
+    await Bun.sleep(2);
+    await signInCodex(auth, codexFile("acct-1", "refresh-3", 10 * day));
+    expect((await auth.vmSecrets()).codexSignIn).not.toBe(first!);
+  });
 });
 
 describe("VM sign-ins", () => {
   test("VMs get only VM Bridge sign-ins, with provider ones cleared", async () => {
-    const written: Record<string, string> = {};
-    const commands: string[] = [];
-    const box = {
-      run: async (command: string) => {
-        commands.push(command);
-        return { ok: true, exitCode: 0, stdout: "", output: "" };
-      },
-      files: { write: async (files: Record<string, string>) => Object.assign(written, files) },
-    } as unknown as Box;
-
+    const { box, written, commands } = recordingBox();
     await prepareVm(box, "1.0.0", { claudeOAuthToken: "sk-ant-oat01-x", codexAuthJson: "{}" });
     const env = written["/workspace/.vmbridge/env"]!;
     expect(env.split("\n")[0]).toContain("GH_TOKEN GITHUB_TOKEN");
@@ -200,19 +204,15 @@ describe("VM sign-ins", () => {
     expect(env).toContain("export CODEX_HOME='/workspace/.vmbridge/codex'");
     expect(env).toContain("export CLAUDE_CONFIG_DIR='/workspace/.vmbridge/claude'");
     expect(env).not.toContain("OPENCODE_API_KEY=");
-    expect(written["/workspace/.vmbridge/codex/auth.json"]).toBe("{}");
-    expect(commands.at(-1)).toStartWith("CODEX_AUTH=1 bash");
+    // Moved into place in the VM unless Codex there refreshed it later.
+    expect(written["/workspace/.vmbridge/codex/auth.json.incoming"]).toBe("{}");
+    expect(commands).toEqual(["bash -s"]);
     // Without a GitHub token, the provider's GitHub helpers are still switched off.
     expect(written["/workspace/.vmbridge/gitconfig"]).toBe('[credential "https://github.com"]\n\thelper =\n');
   });
 
   test("git on the VM uses the GitHub token, the account's name and its noreply email", async () => {
-    const written: Record<string, string> = {};
-    const box = {
-      run: async () => ({ ok: true, exitCode: 0, stdout: "", output: "" }),
-      files: { write: async (files: Record<string, string>) => Object.assign(written, files) },
-    } as unknown as Box;
-
+    const { box, written } = recordingBox();
     const github = { token: "github_pat_abc", login: "octo-cat", name: 'Mona "Octo" Lisa', email: "1+octo-cat@users.noreply.github.com" };
     await prepareVm(box, "1.0.0", { github });
     expect(written["/workspace/.vmbridge/git-credentials"]).toBe("https://octo-cat:github_pat_abc@github.com\n");

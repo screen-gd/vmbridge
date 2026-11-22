@@ -1,9 +1,9 @@
 import type { Agent, Provider } from "@/lib/data";
 
-/** The VM Bridge mark: a bridge between your device and a VM. Same drawing as the dashboard logo. */
+/** The VM Bridge mark: a bridge between your device and a VM. Same drawing as the dashboard logo. Hidden from screen readers, since the name is always written next to it. */
 export function Logo({ className = "size-7" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 32 32" className={`shrink-0 ${className}`} aria-label="VM Bridge">
+    <svg viewBox="0 0 32 32" className={`shrink-0 ${className}`} aria-hidden>
       <rect width="32" height="32" rx="9" fill="#fff" />
       <g fill="none" stroke="#000" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
         <path d="M6 19Q16 3 26 19" />

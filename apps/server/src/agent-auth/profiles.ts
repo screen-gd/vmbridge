@@ -26,11 +26,15 @@ interface StoredProfile {
   error: string | null;
   token?: string;
   baseUrl?: string;
+  /** When Codex was last signed in. Token refreshes keep it; signing in again changes it. */
+  signedInAt?: number;
 }
 
 /** What VM Bridge passes into a VM for its agents. */
 export interface AgentSecrets {
   codexAuthJson?: string;
+  /** Which Codex sign-in `codexAuthJson` holds. Unlike the file, it stays the same when the tokens refresh. */
+  codexSignIn?: string;
   claudeOAuthToken?: string;
   anthropicAuthToken?: string;
   anthropicBaseUrl?: string;
@@ -224,7 +228,11 @@ export class AgentAuth {
     const opencode = inUse.opencode ? this.find(inUse.opencode) : undefined;
     if (opencode) secrets.opencodeApiKey = opencode.token;
     const codex = await this.refreshCodex(false);
-    if (codex) secrets.codexAuthJson = codex;
+    const signedIn = this.codexInUse()?.profile;
+    if (codex && signedIn) {
+      secrets.codexAuthJson = codex;
+      secrets.codexSignIn = `${signedIn.id}@${signedIn.signedInAt ?? signedIn.createdAt}`;
+    }
     return secrets;
   }
 
@@ -303,7 +311,7 @@ export class AgentAuth {
     // Never named after the email: names show unblurred in the dashboard and in folder names.
     const label = name || "ChatGPT account";
     const profile = existing
-      ? { ...existing, error: null, name: name || existing.name }
+      ? { ...existing, error: null, name: name || existing.name, signedInAt: Date.now() }
       : { id: this.newId("codex", label), agent: "codex" as const, method: "chatgpt" as const, name: label, detail: email, createdAt: Date.now(), error: null };
     // Tokens first: saving the profile can put it in use straight away.
     mkdirSync(join(this.dir, profile.id), { recursive: true, mode: 0o700 });

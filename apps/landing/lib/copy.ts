@@ -45,11 +45,11 @@ export const copy = {
     items: [
       {
         title: "Run VM Bridge",
-        body: "First run asks for a dashboard key. VM Bridge stores state in ~/.vmbridge, listens on port 3774, and serves /dashboard.",
+        body: "First run asks for a dashboard password. VM Bridge stores state in ~/.vmbridge, listens on port 3774, and serves /dashboard.",
       },
       {
         title: "Choose a provider",
-        body: "Add a key for boxd, Instabox, Daytona, Boat, or Railway. Then connect GitHub, add agent sign-ins, and set the VM size and idle timeout.",
+        body: "Add a key for boxd, Instabox, Daytona and five more. Then connect GitHub, add agent sign-ins, and set the VM size and idle timeout.",
       },
       {
         title: "Pair T3 Code",
@@ -57,7 +57,7 @@ export const copy = {
       },
       {
         title: "Open a project",
-        body: "VM Bridge creates a VM for the repository, installs Node, T3, Codex, and Claude, starts the T3 server, and clones the project.",
+        body: "VM Bridge creates a VM for the repository, installs Node, T3, Codex, Claude Code, and OpenCode, starts the T3 server, and clones the project.",
       },
     ],
   },
@@ -116,16 +116,16 @@ export const copy = {
     /** Each 90. One line under the log per kind of request. */
     notes: {
       bridge: "Config, the project list, and sleeping threads come from VM Bridge in about 1 ms.",
-      vm: "Messages, file browsing, and Git status go to the project's VM, about 150 to 230 ms away.",
+      vm: "Messages, file browsing, and Git status go to the project's VM, about 160 to 320 ms away.",
     },
   },
 
-  /** A table of the five providers with measured timings. */
+  /** The providers with measured timings: a ring, then the wake race as the provider list. */
   providers: {
     /** 40 */
-    title: "Five supported sandbox providers",
+    title: "Eight supported sandbox providers",
     /** 150 */
-    body: "Use your own account and API key, one provider at a time. Wake times depend on whether the provider pauses, stops, or checkpoints VMs.",
+    body: "Use your own accounts and API keys, and add several providers at once. Wake times depend on whether the provider pauses, stops, or checkpoints VMs.",
     /** Column headings, 14 each. */
     columns: { provider: "Provider", sleep: "Sleep", ready: "New VM", wake: "Wake", latency: "Round trip" },
     /** 90. Shown under the table. */
@@ -148,7 +148,7 @@ export const copy = {
   /** Screenshots of the dashboard behind four tabs. */
   dashboard: {
     /** 40 */
-    title: "A web dashboard behind one key",
+    title: "A web dashboard behind one password",
     /** 150 */
     body: "Inspect VMs, request logs, and devices at /dashboard. The API never returns saved secrets, and logs never store message text or tokens.",
     /** Each label 10, each caption 90. */
@@ -175,6 +175,12 @@ export const copy = {
     body: "One command puts the server, dashboard, and CLI in ~/.local/bin. Run it again to update.",
     /** 20 */
     docs: "Read the docs",
+  },
+
+  /** The questions, opening in place. Answers live in data.faq so structured data and llms.txt share them. */
+  faq: {
+    /** 40 */
+    title: "Questions",
   },
 
   /** The fixed status line: the page's own sleep state, like a VM's. {n} is the countdown. */
@@ -211,7 +217,7 @@ export const copy = {
       ["vmbridge stop", "stop the bridge"],
       ["vmbridge service install", "run at login"],
       ["vmbridge service uninstall", "drop service"],
-      ["vmbridge key", "new dashboard key"],
+      ["vmbridge password", "new dashboard password"],
       ["help", "list commands"],
       ["sleep", "put page to sleep"],
       ["wake", "wake the page"],

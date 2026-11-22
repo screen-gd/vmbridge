@@ -1,15 +1,19 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { copy } from "@/lib/copy";
+import { openGraph, site } from "@/lib/site";
 import "./globals.css";
 
 const geist = Geist({ subsets: ["latin"], variable: "--font-geist" });
 const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono" });
 
 export const metadata: Metadata = {
-  title: { default: copy.meta.title, template: "%s | VM Bridge" },
-  description: copy.meta.description,
-  icons: { icon: "/logo.svg" },
+  metadataBase: new URL(site.url),
+  title: { default: site.title, template: "%s | VM Bridge" },
+  description: site.description,
+  applicationName: site.name,
+  openGraph: { ...openGraph, title: site.title, description: site.description },
+  twitter: { card: "summary_large_image" },
+  icons: { icon: "/logo.svg", apple: "/apple-icon.png" },
 };
 
 export const viewport: Viewport = { themeColor: "#070708" };

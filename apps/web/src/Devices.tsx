@@ -22,7 +22,6 @@ import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, 
 import { useAction } from "@/hooks/use-action";
 import { ago, api, useTick } from "./api.ts";
 import { CopyButton } from "./CopyButton.tsx";
-import { Private } from "./Private.tsx";
 import { Page, Section } from "./Page.tsx";
 
 export function Devices({ overview }: { overview: Overview }) {
@@ -126,12 +125,11 @@ function Pair({ onCreated }: { onCreated: () => Promise<void> }) {
                 <ItemContent className="min-w-0">
                   <ItemTitle>{url.label}</ItemTitle>
                   <ItemDescription className="truncate font-mono text-xs">
-                    <Private>{url.url}</Private>
+                    {url.url}
                   </ItemDescription>
                 </ItemContent>
-                <ItemActions className="gap-0">
+                <ItemActions>
                   <CopyButton value={url.url} label="Copy link" />
-                  <CopyButton value={url.appLink} label="Copy app link" />
                 </ItemActions>
               </Item>
             ))}

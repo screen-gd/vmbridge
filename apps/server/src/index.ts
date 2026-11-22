@@ -16,8 +16,10 @@ import { RemoteBranches } from "./gateway/repos.ts";
 import { Rpc } from "./gateway/rpc.ts";
 import { networkInfo } from "./network.ts";
 import { Secrets, Settings } from "./settings.ts";
+import { Skills } from "./skills.ts";
 import { Store } from "./store.ts";
 import { Traffic } from "./traffic.ts";
+import { Stats } from "./vm/stats.ts";
 
 export { version };
 export const defaultPort = 3774;
@@ -25,7 +27,7 @@ export const defaultHost = "0.0.0.0";
 export const dataDir = () => process.env.VMBRIDGE_HOME || join(homedir(), ".vmbridge");
 export const databasePath = (dir = dataDir()) => join(dir, "main.db");
 
-/** Dashboard key setup, for the CLI to run before the server starts. */
+/** Dashboard password setup, for the CLI to run before the server starts. */
 export function dashboardKey(dir = dataDir()) {
   const db = openDatabase(databasePath(dir));
   const auth = new DashboardAuth(db, new Settings(db));
@@ -53,16 +55,25 @@ export async function start(options: StartOptions = {}) {
   const traffic = new Traffic();
 
   const agents = new AgentAuth(join(dir, "auths"), settings);
-  const fleet = new Fleet(store, settings, secrets, traffic, agents);
-  agents.onChange = () => fleet.emit("changed");
-  const hub = new Hub(store, settings, fleet, traffic);
+  const skills = new Skills(db);
+  const fleet = new Fleet(store, settings, secrets, traffic, agents, skills);
+  skills.on("changed", () => {
+    fleet.emit("changed");
+    void fleet.shareSkills();
+  });
+  const stats = new Stats(fleet);
+  const hub = new Hub(store, settings, fleet, traffic, stats);
+  agents.onChange = () => {
+    fleet.emit("changed");
+    void hub.credentialsChanged().catch(() => {});
+  };
   const clones = new Clones(hub);
   const branches = new RemoteBranches(() => secrets.get("github.token"));
   const clients = new Clients(db);
   const rpc = new Rpc(hub, clones, branches, traffic, () => secrets.has("github.token"));
   const gateway = new T3Gateway(hub, rpc, clients);
   const auth = new DashboardAuth(db, settings);
-  const admin = new Admin({ version, startedAt: Date.now(), host, port, settings, secrets, store, fleet, hub, traffic, clients, auth, gateway, agents });
+  const admin = new Admin({ version, startedAt: Date.now(), host, port, settings, secrets, store, fleet, hub, traffic, clients, auth, gateway, agents, stats, skills });
 
   const server = Bun.serve<SocketData>({
     hostname: host,
@@ -92,6 +103,16 @@ export async function start(options: StartOptions = {}) {
       .finally(() => (sweeping = false));
   }, 15_000);
   const codexSync = setInterval(() => void fleet.syncCodexAuth().catch(() => {}), 60 * 60_000);
+  // Often enough for the dashboard's high memory warning; opening a VM's details reads it right away.
+  const statsTimer = setInterval(() => void stats.sampleAll().catch(() => {}), 30_000);
+  // Installed local skills and instructions files follow edits on this machine. Reading a few small files is cheaper than watching them reliably.
+  skills.instructions.refresh();
+  const skillWatch = setInterval(() => {
+    try {
+      skills.refreshLocal();
+      skills.instructions.refresh();
+    } catch {}
+  }, 5_000);
   void fleet.resume();
   // Accounts saved by older versions lack the details the dashboard shows.
   const githubToken = secrets.get("github.token");
@@ -107,6 +128,8 @@ export async function start(options: StartOptions = {}) {
     async stop() {
       clearInterval(sweep);
       clearInterval(codexSync);
+      clearInterval(statsTimer);
+      clearInterval(skillWatch);
       gateway.close();
       await server.stop(true);
       hub.close();

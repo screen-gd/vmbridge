@@ -1,15 +1,28 @@
+import { Boxd, NotFoundError } from "@boxd-sh/sdk";
 import { boxd } from "@opencoredev/sandbox-sdk/boxd";
+import { freestyle } from "@opencoredev/sandbox-sdk/freestyle";
 import { instabox } from "@opencoredev/sandbox-sdk/instabox";
 import { railway } from "@opencoredev/sandbox-sdk/railway";
+import { superserve } from "@opencoredev/sandbox-sdk/superserve";
 import type { ProviderId } from "@vmbridge/contracts";
+import { Sandbox } from "railway";
 import { boatProvider } from "./boat.ts";
 import { daytonaProvider } from "./daytona.ts";
-import { sdkDriver } from "./sdk.ts";
+import { e2bProvider } from "./e2b.ts";
+import { notFound, retryNotFound, sdkDriver } from "./sdk.ts";
 import { required, type ProviderDefinition } from "./types.ts";
 
 export type { Box, Driver, ProviderDefinition, ProviderState } from "./types.ts";
 
 const minutes = (count: number) => count * 60_000;
+
+async function ignoreNotFound(request: Promise<unknown>) {
+  try {
+    await request;
+  } catch (error) {
+    if (!notFound(error)) throw error;
+  }
+}
 
 const boxdProvider: ProviderDefinition = {
   id: "boxd",
@@ -22,9 +35,11 @@ const boxdProvider: ProviderDefinition = {
     keepsMemory: true,
   },
   sizes: { small: "1 vCPU, 4 GB", medium: "2 vCPU, 8 GB", large: "4 vCPU, 16 GB" },
+  defaultSize: "medium",
   open(config) {
-    const provider = boxd({ apiKey: required(config, "apiKey", "boxd API key") });
-    return sdkDriver({
+    const apiKey = required(config, "apiKey", "boxd API key");
+    const provider = boxd({ apiKey });
+    const driver = sdkDriver({
       id: "boxd",
       provider,
       sleep: "pause",
@@ -32,7 +47,19 @@ const boxdProvider: ProviderDefinition = {
       create: { idleTimeoutMs: minutes(60) },
       // Listing would otherwise skip sleeping machines, and reading their labels wakes them.
       listSleeping: async () => (await provider.listSleeping()).map(({ id, state }) => ({ id, state })),
+      // The SDK has no snapshot delete for boxd, so this uses boxd's own client.
+      async deleteCheckpoint(name) {
+        const client = new Boxd({ apiKey });
+        try {
+          await client.snapshots.delete(name);
+        } catch (error) {
+          if (!(error instanceof NotFoundError)) throw error;
+        } finally {
+          await client.close();
+        }
+      },
     });
+    return { ...driver, create: (input, from) => retryNotFound(() => driver.create(input, from)) };
   },
 };
 
@@ -47,6 +74,7 @@ const instaboxProvider: ProviderDefinition = {
     keepsMemory: true,
   },
   sizes: { small: "2 vCPU, 4 GB", medium: "4 vCPU, 8 GB", large: "8 vCPU, 16 GB" },
+  defaultSize: "small",
   open(config) {
     return sdkDriver({
       id: "instabox",
@@ -84,6 +112,7 @@ const railwayProvider: ProviderDefinition = {
     keepsMemory: false,
   },
   sizes: { small: "1 vCPU, 2 GB", medium: "2 vCPU, 4 GB", large: "4 vCPU, 8 GB" },
+  defaultSize: "medium",
   open(config) {
     // Railway has no pause, and its idle timeout destroys the VM, so VM Bridge never sets one.
     // Sleep is a checkpoint followed by destroy, and waking restores the checkpoint.
@@ -97,6 +126,73 @@ const railwayProvider: ProviderDefinition = {
       // Railway sets CPU and memory per client, not per create.
       sized: (size) => railway({ ...auth, resources: railwayResources[size] }),
       sleep: "checkpoint",
+      // Railway keeps checkpoints until deleted, and deletes them by ID, not by the key the SDK returns.
+      async deleteCheckpoint(key) {
+        const checkpoint = (await Sandbox.checkpoints(auth)).find((entry) => entry.key === key);
+        if (checkpoint) await Sandbox.deleteCheckpoint(checkpoint.id, auth);
+      },
+    });
+  },
+};
+
+const freestyleProvider: ProviderDefinition = {
+  id: "freestyle",
+  label: "Freestyle",
+  website: "https://freestyle.sh",
+  fields: [{ key: "apiKey", label: "API key", kind: "secret", required: true }],
+  features: {
+    sleep: "pause",
+    keepsDisk: true,
+    keepsMemory: true,
+  },
+  // The base snapshot fixes the machine. Freestyle can only grow a VM, never shrink it.
+  sizes: { small: "4 vCPU, 8 GB", medium: "4 vCPU, 8 GB", large: "4 vCPU, 8 GB" },
+  defaultSize: "medium",
+  open(config) {
+    const provider = freestyle({
+      apiKey: required(config, "apiKey", "Freestyle API key"),
+      // The SDK's 30 s default cut off a delete of a VM that had just run T3 and an agent. Freestyle finished it anyway.
+      requestTimeoutMs: 2 * 60_000,
+    });
+    return sdkDriver({
+      id: "freestyle",
+      provider,
+      sleep: "pause",
+      // Freestyle pauses a VM after this long without network traffic, in case VM Bridge is down.
+      create: { idleTimeoutMs: minutes(60) },
+      // The SDK has no snapshot delete for Freestyle.
+      deleteCheckpoint: (snapshotId) => ignoreNotFound(provider.api.request("DELETE", `/v5/snapshots/${encodeURIComponent(snapshotId)}`)),
+    });
+  },
+};
+
+const superserveProvider: ProviderDefinition = {
+  id: "superserve",
+  label: "Superserve",
+  website: "https://superserve.ai",
+  fields: [{ key: "apiKey", label: "API key", kind: "secret", required: true, placeholder: "ss_live_..." }],
+  features: {
+    sleep: "pause",
+    keepsDisk: true,
+    keepsMemory: true,
+  },
+  // Every Superserve template has the same machine.
+  sizes: { small: "2 vCPU, 4 GB", medium: "2 vCPU, 4 GB", large: "2 vCPU, 4 GB" },
+  defaultSize: "medium",
+  open(config) {
+    const provider = superserve({
+      apiKey: required(config, "apiKey", "Superserve API key"),
+      // The SDK needs Python in the VM, which the default node-22 template lacks. VM Bridge installs Node itself.
+      template: "superserve/python-3.11",
+      // Superserve has no idle timer, only a cap on time awake. It pauses a VM awake this long, in case VM Bridge is down.
+      autoPauseMs: minutes(12 * 60),
+    });
+    return sdkDriver({
+      id: "superserve",
+      provider,
+      sleep: "pause",
+      // The SDK has no snapshot delete for Superserve.
+      deleteCheckpoint: (snapshotId) => ignoreNotFound(provider.api.request("DELETE", `/snapshots/${encodeURIComponent(snapshotId)}`)),
     });
   },
 };
@@ -105,6 +201,9 @@ export const providers: Record<ProviderId, ProviderDefinition> = {
   boat: boatProvider,
   boxd: boxdProvider,
   daytona: daytonaProvider,
+  e2b: e2bProvider,
+  freestyle: freestyleProvider,
   instabox: instaboxProvider,
   railway: railwayProvider,
+  superserve: superserveProvider,
 };

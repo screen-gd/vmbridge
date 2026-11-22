@@ -24,7 +24,7 @@ const speed = Math.max(...lanes.map((s) => s ?? 0)) > 10 ? 2 : 1;
 
 /** Each provider's seat on the ring: its percent position and the spoke path back to the centre. */
 const spots = providers.map((provider, i) => {
-  const angle = ((-90 + i * 72) * Math.PI) / 180;
+  const angle = ((-90 + i * (360 / providers.length)) * Math.PI) / 180;
   const x = Math.round((50 + 38 * Math.cos(angle)) * 100) / 100;
   const y = Math.round((50 + 38 * Math.sin(angle)) * 100) / 100;
   return { provider, x, y, spoke: `M50 50 L ${x} ${y}` };
@@ -39,7 +39,7 @@ const staticTimes = providers.map((p) =>
     : null,
 );
 
-/** The five providers on a ring around the bridge mark, with the wake race beside it as the provider list. */
+/** The providers on a ring around the bridge mark, with the wake race beside it as the provider list. */
 export function Providers() {
   const orbit = useRef<HTMLDivElement>(null);
   const inView = useInView(orbit);
@@ -158,7 +158,7 @@ export function Providers() {
               >
                 <div className="flex flex-col items-center gap-2 p-2">
                   <span className="bg-background transition-transform duration-150 hover:scale-[1.06]">
-                    <ProviderLogo provider={spot.provider} className="size-12 rounded-md ring-white/10 sm:size-14" />
+                    <ProviderLogo provider={spot.provider} className="size-11 rounded-md ring-white/10 sm:size-12" />
                   </span>
                   <span className="text-[13px] font-medium">{spot.provider.name}</span>
                 </div>
@@ -173,7 +173,7 @@ export function Providers() {
             const fill = seconds === null ? 0 : Math.min(1, t / seconds);
             const finished = raced && seconds !== null && elapsed[i] >= seconds;
             return (
-              <div key={p.id} className="flex items-center gap-4 py-3.5">
+              <div key={p.id} className="flex items-center gap-4 py-3">
                 <ProviderLogo provider={p} className="size-7 shrink-0 rounded-md ring-white/10" />
                 <div className="w-32 shrink-0 sm:w-44">
                   <div className="text-[15px] font-medium">{p.name}</div>

@@ -24,18 +24,46 @@ if [ "$os" = darwin ] && [ "$arch" = x64 ] && [ "$(sysctl -n sysctl.proc_transla
   arch=arm64
 fi
 
-url="https://github.com/$repo/releases/latest/download/vmbridge-$os-$arch"
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+  sha256="shasum -a 256"
+else
+  echo "Install sha256sum or shasum so the download can be checked." >&2
+  exit 1
+fi
+
+file="vmbridge-$os-$arch"
+base="https://github.com/$repo/releases/latest/download"
 mkdir -p "$dir"
 tmp="$(mktemp "$dir/.vmbridge.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
 
 echo "Downloading VM Bridge for $os-$arch..."
-curl -fSL --progress-bar "$url" -o "$tmp"
+sums="$(curl -fsSL "$base/SHA256SUMS")"
+curl -fSL --progress-bar "$base/$file" -o "$tmp"
+
+# Lines look like "<hash>  <file>" (or "<hash> *<file>" in binary mode).
+expected="$(printf '%s\n' "$sums" | awk -v f="$file" '$2 == f || $2 == "*" f { print $1; exit }')"
+if [ -z "$expected" ]; then
+  echo "The release has no checksum for $file. Nothing was changed." >&2
+  exit 1
+fi
+actual="$($sha256 "$tmp" | awk '{ print $1 }')"
+if [ "$actual" != "$expected" ]; then
+  echo "The download does not match its checksum. Nothing was changed." >&2
+  exit 1
+fi
 chmod 755 "$tmp"
+# Check the download runs before it replaces a working install.
+if ! version="$("$tmp" --version 2>/dev/null)"; then
+  echo "The downloaded VM Bridge does not run on this machine. Nothing was changed." >&2
+  exit 1
+fi
 mv "$tmp" "$dir/vmbridge"
 trap - EXIT
 
-echo "Installed VM Bridge $("$dir/vmbridge" --version 2>/dev/null) to $dir/vmbridge"
+echo "Installed VM Bridge $version to $dir/vmbridge"
 
 case ":$PATH:" in
   *":$dir:"*) ;;

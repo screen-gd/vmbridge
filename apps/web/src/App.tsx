@@ -1,45 +1,39 @@
 import { useEffect, useState } from "react";
+import { parseAsString, parseAsStringLiteral, useQueryStates } from "nuqs";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { File01Icon, FlowConnectionIcon, LaptopIcon, Logout01Icon, Plug01Icon, Settings01Icon } from "@hugeicons/core-free-icons";
+import { File01Icon, FlowConnectionIcon, LaptopIcon, Logout01Icon, MagicWand01Icon, Plug01Icon, Settings01Icon } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Toaster } from "@/components/ui/sonner";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAction } from "@/hooks/use-action";
 import { cn } from "@/lib/utils";
 import { api, onLoggedOut, useLive } from "./api.ts";
-import { Logo, ProviderLogo } from "./brand.tsx";
+import { Logo } from "./brand.tsx";
 import { Canvas } from "./Canvas.tsx";
 import { Devices } from "./Devices.tsx";
 import { Logs } from "./Logs.tsx";
+import { boxStyle, NavIndicator, useSlidingNav } from "./nav.tsx";
 import { Settings } from "./Settings.tsx";
 import { Setup } from "./Setup.tsx";
+import { Skills } from "./Skills.tsx";
 
 const views = [
   { id: "canvas", label: "Canvas", icon: FlowConnectionIcon },
   { id: "logs", label: "Logs", icon: File01Icon },
   { id: "setup", label: "Setup", icon: Plug01Icon },
+  { id: "skills", label: "Skills", icon: MagicWand01Icon },
   { id: "devices", label: "Devices", icon: LaptopIcon },
   { id: "settings", label: "Settings", icon: Settings01Icon },
 ] as const satisfies readonly { id: string; label: string; icon: IconSvgElement }[];
 
 type View = (typeof views)[number]["id"];
 
-/** The view lives in the URL hash so a reload keeps your place. */
+/** The view and its page's tab live in the URL so a reload keeps your place. A new view starts on its first tab. */
 function useView() {
-  const read = (): View | null => views.find((view) => `#${view.id}` === location.hash)?.id ?? null;
-  const [view, setView] = useState<View | null>(read);
-  useEffect(() => {
-    const onHash = () => setView(read());
-    addEventListener("hashchange", onHash);
-    return () => removeEventListener("hashchange", onHash);
-  }, []);
-  const go = (next: View) => {
-    history.replaceState(null, "", `#${next}`);
-    setView(next);
-  };
-  return [view, go] as const;
+  const [{ view }, setUrl] = useQueryStates({ view: parseAsStringLiteral(views.map((entry) => entry.id)), tab: parseAsString });
+  return [view, (next: View) => void setUrl({ view: next, tab: null })] as const;
 }
 
 export function App() {
@@ -75,7 +69,7 @@ function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
         </div>
         <FieldGroup>
           <Field data-invalid={Boolean(action.error)}>
-            <FieldLabel htmlFor="key">Dashboard key</FieldLabel>
+            <FieldLabel htmlFor="key">Password</FieldLabel>
             <Input id="key" type="password" className="h-10" autoFocus autoComplete="current-password" value={key} onChange={(event) => setKey(event.target.value)} />
             {action.error && <FieldError>{action.error}</FieldError>}
           </Field>
@@ -93,7 +87,6 @@ function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [chosen, go] = useView();
   const view: View = chosen ?? (overview && !overview.setup.provider ? "setup" : "canvas");
   const setupDone = overview && overview.setup.provider && overview.setup.github && overview.setup.agents;
-  const provider = overview?.provider?.active ? overview.provider : null;
   const current = views.find((entry) => entry.id === view)!;
 
   return (
@@ -102,16 +95,7 @@ function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
         <Logo className="size-7" />
         <span className="text-lg text-faint">/</span>
         <nav className="flex min-w-0 items-center gap-2 text-sm">
-          {provider ? (
-            <span className="flex min-w-0 items-center gap-2 font-medium">
-              <ProviderLogo id={provider.id} className="size-5 rounded" />
-              <span className="truncate">{provider.label}</span>
-            </span>
-          ) : (
-            <span className="text-muted-foreground">No provider</span>
-          )}
-          <span className="text-faint">/</span>
-          <span className="truncate text-muted-foreground">{current.label}</span>
+          <span className="truncate font-medium">{current.label}</span>
         </nav>
         <div className={cn("ml-auto flex items-center gap-2 text-xs", online ? "text-muted-foreground" : "text-warning")}>
           <span className={cn("size-2 rounded-full", online ? "bg-success" : "bg-warning")} />
@@ -120,49 +104,87 @@ function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
-        <nav className="order-last flex shrink-0 items-center justify-around gap-1 px-2 py-1.5 sm:order-none sm:w-14 sm:flex-col sm:justify-start sm:px-0 sm:py-2">
-          {views.map((entry) => (
-            <Tooltip key={entry.id}>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-lg"
-                  aria-label={entry.label}
-                  aria-current={view === entry.id ? "page" : undefined}
-                  onClick={() => go(entry.id)}
-                  className={cn("relative size-10 rounded-lg text-muted-foreground", view === entry.id && "bg-accent text-foreground hover:bg-accent")}
-                >
-                  <HugeiconsIcon icon={entry.icon} className="size-5" strokeWidth={1.75} />
-                  {entry.id === "setup" && overview && !setupDone && <span className="absolute top-2 right-2 size-1.5 rounded-full bg-warning" />}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right">{entry.label}</TooltipContent>
-            </Tooltip>
-          ))}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-lg"
-                aria-label="Log out"
-                className="size-10 rounded-lg text-muted-foreground max-sm:hidden sm:mt-auto"
-                onClick={() => void api("/logout", { body: {} }).finally(onLoggedOut)}
-              >
-                <HugeiconsIcon icon={Logout01Icon} className="size-5" strokeWidth={1.75} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right">Log out</TooltipContent>
-          </Tooltip>
-        </nav>
+        <Sidebar
+          view={overview ? view : undefined}
+          setupPending={Boolean(overview && !setupDone)}
+          onView={go}
+          onLogOut={() => void api("/logout", { body: {} }).finally(onLoggedOut)}
+        />
 
         <main className="relative mx-2 min-h-0 flex-1 overflow-hidden rounded-xl border bg-background sm:mr-3 sm:mb-3 sm:ml-0">
           {overview && view === "canvas" && <Canvas overview={overview} traffic={traffic} onPair={() => go("devices")} />}
           {overview && view === "logs" && <Logs overview={overview} traffic={traffic} />}
           {overview && view === "setup" && <Setup overview={overview} />}
+          {overview && view === "skills" && <Skills overview={overview} />}
           {overview && view === "devices" && <Devices overview={overview} />}
           {overview && view === "settings" && <Settings overview={overview} onLoggedOut={onLoggedOut} />}
         </main>
       </div>
     </div>
+  );
+}
+
+/**
+ * The icon rail on the left, a bottom bar on phones. One tooltip follows the pointer from icon to icon.
+ * `view` waits for the overview, since that can change the default view; the highlight then starts in place instead of sliding there.
+ */
+function Sidebar({ view, setupPending, onView, onLogOut }: { view?: View; setupPending: boolean; onView: (view: View) => void; onLogOut: () => void }) {
+  const { hover, current, navProps, itemProps } = useSlidingNav(view);
+  // Like the tooltip provider's delay: the first tooltip waits, then it follows the pointer at once. Keyboard focus shows it right away.
+  const [tipReady, setTipReady] = useState(false);
+  const shown = hover?.shown ?? false;
+  const focused = hover?.focused ?? false;
+  useEffect(() => {
+    setTipReady(shown && focused);
+    if (!shown || focused) return;
+    const timer = setTimeout(() => setTipReady(true), 300);
+    return () => clearTimeout(timer);
+  }, [shown, focused]);
+  const item = "relative size-10 rounded-lg text-muted-foreground hover:bg-transparent dark:hover:bg-transparent";
+
+  return (
+    <nav
+      {...navProps}
+      className="relative order-last flex shrink-0 items-center justify-around gap-1 px-2 py-1.5 sm:order-none sm:w-14 sm:flex-col sm:justify-start sm:px-0 sm:py-2"
+    >
+      {hover && <NavIndicator box={hover.box} shown={hover.shown} slide={hover.slide} className="rounded-lg bg-muted/50" />}
+      {current && <NavIndicator box={current.box} slide={current.slide} className="rounded-lg bg-accent" />}
+      {views.map((entry) => (
+        <Button
+          key={entry.id}
+          {...itemProps(entry.id, entry.label)}
+          variant="ghost"
+          size="icon-lg"
+          aria-label={entry.label}
+          aria-current={view === entry.id ? "page" : undefined}
+          onClick={() => onView(entry.id)}
+          className={cn(item, view === entry.id && "text-foreground")}
+        >
+          <HugeiconsIcon icon={entry.icon} className="size-5" strokeWidth={1.75} />
+          {entry.id === "setup" && setupPending && <span className="absolute top-2 right-2 size-1.5 rounded-full bg-warning" />}
+        </Button>
+      ))}
+      <Button {...itemProps("logout", "Log out")} variant="ghost" size="icon-lg" aria-label="Log out" className={cn(item, "max-sm:hidden sm:mt-auto")} onClick={onLogOut}>
+        <HugeiconsIcon icon={Logout01Icon} className="size-5" strokeWidth={1.75} />
+      </Button>
+      {hover && (
+        // The buttons carry their names, so this label only repeats them for sighted users.
+        <span
+          aria-hidden
+          className={cn("pointer-events-none absolute top-0 left-0 z-50 ease-out motion-reduce:transition-none", hover.slide && tipReady && "transition-transform duration-200")}
+          style={boxStyle(hover.box)}
+        >
+          <span
+            className={cn(
+              "absolute bottom-full left-1/2 mb-2 w-max -translate-x-1/2 rounded-md bg-foreground px-3 py-1.5 text-xs text-background transition-opacity duration-150 motion-reduce:transition-none sm:top-1/2 sm:bottom-auto sm:left-full sm:mb-0 sm:ml-2 sm:translate-x-0 sm:-translate-y-1/2",
+              !(shown && tipReady) && "opacity-0",
+            )}
+          >
+            {hover.label}
+            <span className="absolute bottom-0 left-1/2 size-2.5 -translate-x-1/2 translate-y-1/2 rotate-45 rounded-[2px] bg-foreground sm:top-1/2 sm:bottom-auto sm:left-0 sm:-translate-y-1/2" />
+          </span>
+        </span>
+      )}
+    </nav>
   );
 }

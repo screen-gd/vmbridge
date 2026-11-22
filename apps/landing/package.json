@@ -6,7 +6,8 @@
     "dev": "next dev --port 3100",
     "build": "next build",
     "start": "next start --port 3100",
-    "typecheck": "next typegen && tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit",
+    "og": "bun scripts/og.ts"
   },
   "dependencies": {
     "@hugeicons/core-free-icons": "4.4.0",
@@ -24,6 +25,7 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/three": "0.187.0",
+    "playwright-core": "1.65.1",
     "tailwindcss": "4.3.5",
     "typescript": "~5.9.3"
   }

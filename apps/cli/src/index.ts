@@ -12,15 +12,20 @@ Usage:
   vmbridge stop                                     Stop VM Bridge, including the background service
   vmbridge service install [--host] [--port]        Run VM Bridge in the background at login
   vmbridge service uninstall                        Remove the background service
-  vmbridge key                                      Set a new dashboard key
+  vmbridge password                                 Set a new dashboard password
 
-The dashboard key can also come from VMBRIDGE_DASHBOARD_KEY. Data lives in ${dataDir()}.`;
+The password can also come from VMBRIDGE_PASSWORD. Data lives in ${dataDir()}.`;
 
 const pidFile = () => join(dataDir(), "vmbridge.pid");
 
+/**
+ * Another live VM Bridge process from the pid file. A file naming this process
+ * does not count: `bun --watch` restarts in place and keeps the pid, so `run` sees its own.
+ */
 function runningPid(): number | null {
   if (!existsSync(pidFile())) return null;
   const pid = Number(readFileSync(pidFile(), "utf8"));
+  if (pid === process.pid) return null;
   try {
     process.kill(pid, 0);
     return pid;
@@ -63,28 +68,28 @@ async function readSecret(question: string): Promise<string> {
 
 async function chooseKey(): Promise<string> {
   for (;;) {
-    const key = await readSecret("Choose a dashboard key (at least 8 characters): ");
+    const key = await readSecret("Choose a dashboard password (at least 8 characters): ");
     if (key.length < 8) {
       console.log("Too short.");
       continue;
     }
     if ((await readSecret("Type it again: ")) === key) return key;
-    console.log("The keys did not match.");
+    console.log("The passwords did not match.");
   }
 }
 
-/** Makes sure a dashboard key exists before the server starts listening. */
+/** Makes sure a dashboard password exists before the server starts listening. */
 async function ensureKey(force = false) {
   const keys = dashboardKey();
   try {
     if (keys.isSet() && !force) return;
-    const fromEnv = process.env.VMBRIDGE_DASHBOARD_KEY;
+    const fromEnv = process.env.VMBRIDGE_PASSWORD;
     if (fromEnv && !force) return await keys.set(fromEnv);
     if (!process.stdin.isTTY) {
-      throw new Error("Set a dashboard key first: run `vmbridge key` in a terminal, or set VMBRIDGE_DASHBOARD_KEY.");
+      throw new Error("Set a dashboard password first: run `vmbridge password` in a terminal, or set VMBRIDGE_PASSWORD.");
     }
     await keys.set(await chooseKey());
-    console.log("Dashboard key saved.");
+    console.log("Password saved.");
   } finally {
     keys.close();
   }
@@ -115,7 +120,7 @@ async function run(options: { host: string; port: number }) {
     if (stopping) return;
     stopping = true;
     await server.stop().catch(() => {});
-    if (runningPid() === process.pid) rmSync(pidFile(), { force: true });
+    if (!runningPid()) rmSync(pidFile(), { force: true });
     process.exit(0);
   };
   process.on("SIGINT", stop);
@@ -153,7 +158,7 @@ async function main() {
       return run(serverOptions(values));
     case "stop":
       return stop();
-    case "key":
+    case "password":
       return ensureKey(true);
     case "service":
       if (subcommand === "install") {

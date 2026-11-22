@@ -126,11 +126,42 @@
   }
 }
 
+/* A thin rounded thumb on no track. The transparent border insets the thumb from the edge.
+   Chrome ignores these pseudo-elements once scrollbar-color is set, so that is only for Firefox. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--input) padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--faint);
+}
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--input) transparent;
+  }
+}
+
 .react-flow {
   --xy-background-color: transparent;
   --xy-background-pattern-color: #262626;
   --xy-handle-background-color: #333;
   --xy-handle-border-color: #000;
+}
+
+/* Nodes are focusable wrappers around rounded-xl cards; match the card radius
+   so the keyboard focus outline follows the card instead of a square box. */
+.react-flow__node {
+  border-radius: var(--radius-xl);
 }
 
 .react-flow__handle {

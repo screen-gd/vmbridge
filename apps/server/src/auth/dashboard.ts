@@ -25,7 +25,7 @@ export class DashboardAuth {
   }
 
   async setKey(key: string): Promise<void> {
-    if (key.length < 8) throw new Error("The dashboard key needs at least 8 characters.");
+    if (key.length < 8) throw new Error("The password needs at least 8 characters.");
     this.settings.set("dashboardKeyHash", await Bun.password.hash(key));
     // A new key ends every existing dashboard session.
     this.db.query("DELETE FROM admin_sessions").run();

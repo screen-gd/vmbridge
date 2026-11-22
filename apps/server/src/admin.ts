@@ -1,25 +1,33 @@
 import type { Server } from "bun";
 import {
+  agentKinds,
   providerIds,
   vmSizes,
   type LiveMessage,
   type Overview,
   type ProviderId,
   type ProviderInfo,
+  type RepoRule,
   type VmInfo,
+  type VmSize,
 } from "@vmbridge/contracts";
 import { InvalidSignIn, type AgentAuth, type TokenInput } from "./agent-auth/profiles.ts";
 import { TooManyAttempts, type DashboardAuth } from "./auth/dashboard.ts";
-import { fetchGitHubAccount, GitHubRejected } from "./github.ts";
+import { fetchGitHubAccount, fetchGitHubRepos, GitHubRejected } from "./github.ts";
 import type { Clients } from "./auth/clients.ts";
 import { message, providerValues, type Fleet } from "./fleet.ts";
 import type { Hub } from "./gateway/hub.ts";
 import type { T3Gateway } from "./gateway/http.ts";
+import { githubName } from "./gateway/repos.ts";
+import { isWorking } from "./gateway/types.ts";
 import { disableTailscaleHttps, enableTailscaleHttps, networkInfo } from "./network.ts";
 import { providers } from "./providers/index.ts";
-import type { Secrets, Settings } from "./settings.ts";
+import { envVars, saveEnvVars, type Secrets, type Settings } from "./settings.ts";
+import { SkillError, type Skills } from "./skills.ts";
 import type { Store } from "./store.ts";
 import type { Traffic } from "./traffic.ts";
+import { envNameProblem, envValueProblem } from "./vm/runtime.ts";
+import type { Stats } from "./vm/stats.ts";
 
 export interface AdminDeps {
   version: string;
@@ -36,12 +44,15 @@ export interface AdminDeps {
   auth: DashboardAuth;
   gateway: T3Gateway;
   agents: AgentAuth;
+  stats: Stats;
+  skills: Skills;
 }
 
 class BadRequest extends Error {}
 
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
-const isProvider = (id: string): id is ProviderId => (providerIds as readonly string[]).includes(id);
+const isProvider = (id: unknown): id is ProviderId => (providerIds as readonly unknown[]).includes(id);
+const isSize = (size: unknown): size is VmSize => (vmSizes as readonly unknown[]).includes(size);
 
 async function body(request: Request): Promise<Record<string, unknown>> {
   const value: unknown = await request.json().catch(() => null);
@@ -81,13 +92,13 @@ export class Admin {
       return await this.route(request, path);
     } catch (error) {
       if (error instanceof TooManyAttempts) return json({ error: error.message }, 429);
-      if (error instanceof BadRequest || error instanceof InvalidSignIn || error instanceof GitHubRejected) return json({ error: error.message }, 400);
+      if (error instanceof BadRequest || error instanceof InvalidSignIn || error instanceof GitHubRejected || error instanceof SkillError) return json({ error: error.message }, 400);
       return json({ error: message(error) }, 500);
     }
   }
 
   private async route(request: Request, path: string): Promise<Response> {
-    const { settings, secrets, store, fleet, hub, clients, auth, gateway, agents } = this.deps;
+    const { settings, secrets, store, fleet, hub, clients, auth, gateway, agents, skills } = this.deps;
     const method = request.method;
     const [, section, id, action] = path.split("/");
 
@@ -95,7 +106,7 @@ export class Admin {
       return new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json", "set-cookie": auth.logout(request) } });
     }
     if (path === "/key" && method === "POST") {
-      await auth.setKey(text((await body(request)).key, "The key"));
+      await auth.setKey(text((await body(request)).key, "The password"));
       return json({ ok: true });
     }
     if (path === "/overview" && method === "GET") return json(this.overview());
@@ -141,13 +152,56 @@ export class Admin {
         const field = new URL(request.url).searchParams.get("field") ?? "";
         return json(await fleet.driver(id).options(field));
       }
-      if (action === "activate" && method === "POST") {
+      if (action === "add" && method === "POST") {
         await fleet.driver(id).verify();
-        settings.set("activeProvider", id);
-        fleet.emit("changed");
-        hub.emit("config");
+        const added = settings.get("providers");
+        if (!added.includes(id)) {
+          settings.set("providers", [...added, id]);
+          // So the first VM there can already start from a base snapshot.
+          void fleet.prepareBase(id).catch(() => {});
+        }
+        // The first provider added becomes the default.
+        if (!settings.get("defaultProvider")) settings.set("defaultProvider", id);
+        this.providersChanged();
         return json(this.providerInfo(id));
       }
+      if (action === "default" && method === "POST") {
+        if (!settings.get("providers").includes(id)) throw new BadRequest(`Add ${definition.label} first.`);
+        settings.set("defaultProvider", id);
+        this.providersChanged();
+        return json(this.providerInfo(id));
+      }
+      // VMs already on the provider keep running. Only new VMs stop going there.
+      if (!action && method === "DELETE") {
+        const remaining = settings.get("providers").filter((entry) => entry !== id);
+        settings.set("providers", remaining);
+        void fleet.bases.drop(id).catch(() => {});
+        if (settings.get("defaultProvider") === id) settings.set("defaultProvider", remaining[0] ?? null);
+        this.providersChanged();
+        return json(this.providerInfo(id));
+      }
+    }
+
+    if (path === "/github/repos" && method === "GET") {
+      const token = secrets.get("github.token");
+      return json(token ? await fetchGitHubRepos(token) : []);
+    }
+    if (path === "/repo-rules" && method === "PUT") {
+      const { rules } = await body(request);
+      if (!Array.isArray(rules)) throw new BadRequest("Send the repository rules.");
+      const seen = new Set<string>();
+      const parsed = rules.map((rule): RepoRule => {
+        const repo = typeof rule?.repo === "string" ? githubName(rule.repo) : undefined;
+        if (!repo) throw new BadRequest("Name each repository as owner/name.");
+        if (seen.has(repo.toLowerCase())) throw new BadRequest(`${repo} is listed twice.`);
+        seen.add(repo.toLowerCase());
+        if (rule.provider !== null && !isProvider(rule.provider)) throw new BadRequest("Unknown provider.");
+        if (rule.size !== null && !isSize(rule.size)) throw new BadRequest("Pick small, medium or large.");
+        return { repo, provider: rule.provider, size: rule.size };
+      });
+      settings.set("repoRules", parsed);
+      fleet.emit("changed");
+      return json(parsed);
     }
 
     if (path === "/github" && method === "PUT") {
@@ -157,6 +211,7 @@ export class Admin {
       secrets.set("github.token", token);
       settings.set("github", account);
       fleet.emit("changed");
+      void hub.credentialsChanged().catch(() => {});
       hub.emit("config");
       return json(account);
     }
@@ -166,6 +221,7 @@ export class Admin {
       const account = await fetchGitHubAccount(token);
       settings.set("github", account);
       fleet.emit("changed");
+      void hub.credentialsChanged().catch(() => {});
       hub.emit("config");
       return json(account);
     }
@@ -173,8 +229,30 @@ export class Admin {
       secrets.set("github.token", null);
       settings.set("github", null);
       fleet.emit("changed");
+      void hub.credentialsChanged().catch(() => {});
       hub.emit("config");
       return json({ ok: true });
+    }
+
+    // Environment variables for every VM. Values go in and never come out.
+    if (section === "env" && id) {
+      const name = decodeURIComponent(id);
+      // Each change reads the saved variables right before writing them, after any await, so overlapping saves keep each other's.
+      if (!action && method === "PUT") {
+        const problem = envNameProblem(name);
+        if (problem) throw new BadRequest(problem);
+        const { value } = await body(request);
+        if (typeof value !== "string") throw new BadRequest("The value must be text.");
+        const invalid = envValueProblem(value);
+        if (invalid) throw new BadRequest(invalid);
+        saveEnvVars(secrets, { ...envVars(secrets), [name]: value });
+      } else if (!action && method === "DELETE") {
+        const { [name]: _removed, ...rest } = envVars(secrets);
+        saveEnvVars(secrets, rest);
+      } else return json({ error: "Not found." }, 404);
+      fleet.emit("changed");
+      void hub.credentialsChanged().catch(() => {});
+      return json(Object.keys(envVars(secrets)));
     }
 
     if (path === "/agents" && method === "POST") {
@@ -223,8 +301,8 @@ export class Admin {
     if (path === "/settings" && method === "PUT") {
       const input = await body(request);
       if (input.vmSize !== undefined) {
-        if (!(vmSizes as readonly unknown[]).includes(input.vmSize)) throw new BadRequest("Pick small, medium or large.");
-        settings.set("vmSize", input.vmSize as (typeof vmSizes)[number]);
+        if (input.vmSize !== null && !isSize(input.vmSize)) throw new BadRequest("Pick default, small, medium or large.");
+        settings.set("vmSize", input.vmSize);
       }
       if (input.idleMinutes !== undefined) {
         const minutes = Number(input.idleMinutes);
@@ -252,7 +330,7 @@ export class Admin {
         const network = await networkInfo(this.deps.host, this.deps.port);
         const urls = network.addresses.map((address) => {
           const url = `${address.url}/pair#token=${link.token}`;
-          return { kind: address.kind, label: address.label, url, appLink: `t3code://pair?${new URLSearchParams({ url })}` };
+          return { kind: address.kind, label: address.label, url };
         });
         return json({ link: link.link, urls });
       }
@@ -268,12 +346,49 @@ export class Admin {
       return json({ ok: true });
     }
 
+    if (section === "skills") {
+      if (id === "local" && !action && method === "GET") return json(skills.discover());
+      if (id === "local" && !action && method === "PUT") {
+        const input = await body(request);
+        if (typeof input.sync !== "boolean") throw new BadRequest("Say whether to sync every local skill.");
+        skills.setSyncAll(input.sync);
+        return json(skills.discover());
+      }
+      if (id === "search" && !action && method === "GET") {
+        const query = new URL(request.url).searchParams.get("q")?.trim() ?? "";
+        return json(query ? await skills.search(query) : []);
+      }
+      if (!id && method === "POST") {
+        const input = await body(request);
+        if (input.source === "skills.sh") await skills.installFromSkillsSh(text(input.repo, "The repository"), text(input.skill, "The skill"));
+        else if (input.source === "local") await skills.installLocal(text(input.path, "The folder"));
+        else throw new BadRequest("Pick a skill from skills.sh or this machine.");
+        return json(skills.list());
+      }
+      if (id && action === "update" && method === "POST") return json({ changed: await skills.update(decodeURIComponent(id)) });
+      if (id && !action && method === "DELETE") {
+        skills.remove(decodeURIComponent(id));
+        return json(skills.list());
+      }
+    }
+
+    if (section === "instructions" && id && !action && method === "PUT") {
+      const agent = agentKinds.find((kind) => kind === id);
+      if (!agent) return json({ error: "No such agent." }, 404);
+      const input = await body(request);
+      if (typeof input.sync !== "boolean") throw new BadRequest("Say whether to sync it.");
+      skills.instructions.setSync(agent, input.sync);
+      return json(skills.instructions.list());
+    }
+
     if (section === "vms" && id) {
       if (!store.vm(id)) return json({ error: "No such VM." }, 404);
       if (action === "wake" && method === "POST") {
         void fleet.ensure(id).catch(() => {});
         return json({ ok: true });
       }
+      // A fresh reading for an open details panel. It never wakes the VM.
+      if (action === "stats" && method === "GET") return json(await this.deps.stats.sample(id));
       if (action === "sleep" && method === "POST") {
         await fleet.sleep(id);
         return json({ ok: true });
@@ -285,7 +400,10 @@ export class Admin {
       }
     }
     if (section === "vms" && !id && method === "POST") {
-      const vm = await fleet.create();
+      const { provider, size } = await body(request);
+      if (provider !== undefined && !isProvider(provider)) throw new BadRequest("Unknown provider.");
+      if (size !== undefined && !isSize(size)) throw new BadRequest("Pick small, medium or large.");
+      const vm = await fleet.create({ provider, size });
       void fleet.ensure(vm.id).catch(() => {});
       return json({ id: vm.id });
     }
@@ -308,20 +426,28 @@ export class Admin {
       fields: definition.fields,
       features: definition.features,
       sizes: definition.sizes,
+      defaultSize: definition.defaultSize,
       values,
       secretsSet,
       configured: definition.fields.every((field) => !field.required || Boolean(all[field.key])),
-      active: settings.get("activeProvider") === id,
+      added: settings.get("providers").includes(id),
+      isDefault: settings.get("defaultProvider") === id,
     };
+  }
+
+  private providersChanged() {
+    this.deps.fleet.emit("changed");
+    // T3's agent list labels agents with the provider when there is only one.
+    this.deps.hub.emit("config");
   }
 
   overview(): Overview {
     const { settings, secrets, store, fleet, hub, clients, gateway } = this.deps;
-    const active = settings.get("activeProvider");
-    const provider = active ? this.providerInfo(active) : null;
+    const defaultProvider = settings.get("defaultProvider");
     const agents = this.deps.agents.list();
     const projects = store.projects();
     const idleMs = settings.get("idleMinutes") * 60_000;
+    const skills = this.deps.skills.state();
     const vms = store
       .vms()
       .filter((vm) => vm.state !== "gone")
@@ -331,6 +457,7 @@ export class Admin {
           id: vm.id,
           name: vm.name,
           provider: vm.provider,
+          providerLabel: providers[vm.provider].label,
           sandboxId: vm.sandboxId,
           size: vm.size,
           sizeLabel: providers[vm.provider].sizes[vm.size],
@@ -341,7 +468,7 @@ export class Admin {
           lastConnectedAt: vm.lastConnectedAt,
           lastSleptAt: vm.lastSleptAt,
           sleepsAt: idle ? (vm.lastActivityAt ?? vm.createdAt) + idleMs : null,
-          projects: projects.filter((project) => project.vmId === vm.id).map((project) => project.id),
+          projects: projects.filter((project) => project.vms.some((entry) => entry.vmId === vm.id)).map((project) => project.id),
           sessions: hub.vmThreads(vm.id).map((thread) => {
             const model = thread.modelSelection as { model?: unknown } | undefined;
             return {
@@ -351,22 +478,30 @@ export class Admin {
               model: typeof model?.model === "string" ? model.model : null,
               provider: typeof thread.providerInstanceId === "string" ? thread.providerInstanceId : null,
               status: String(thread.status ?? "idle"),
+              working: isWorking(thread),
               updatedAt: typeof thread.updatedAt === "string" ? thread.updatedAt : null,
             };
           }),
           t3Version: vm.t3Version,
+          updatePending: fleet.behind(vm),
+          stats: vm.state === "ready" || vm.state === "busy" ? this.deps.stats.get(vm.id) : null,
+          skillsPending:
+            vm.sandboxId !== null && vm.skills !== skills.fingerprint && (skills.skills.length > 0 || skills.instructions.length > 0 || vm.skills !== null),
         };
       });
     return {
       bridge: { id: settings.get("bridgeId"), version: this.deps.version, startedAt: this.deps.startedAt },
       setup: {
-        provider: Boolean(provider?.configured && provider.active),
+        provider: Boolean(defaultProvider),
         github: secrets.has("github.token"),
         agents: agents.some((profile) => profile.inUse),
       },
-      provider,
+      providers: settings.get("providers").map((id) => this.providerInfo(id)),
+      defaultProvider,
+      repoRules: settings.get("repoRules"),
       github: secrets.has("github.token") ? settings.get("github") : null,
       agents,
+      env: Object.keys(envVars(secrets)),
       settings: { vmSize: settings.get("vmSize"), idleMinutes: settings.get("idleMinutes"), t3Version: settings.get("t3Version") },
       clients: clients.list(gateway.connected()),
       vms,
@@ -375,9 +510,12 @@ export class Admin {
         title: project.title,
         url: project.url,
         branch: project.branch,
-        vmId: project.vmId,
+        vmIds: project.vms.map((entry) => entry.vmId),
         createdAt: project.createdAt,
       })),
+      skills: this.deps.skills.list(),
+      syncLocalSkills: this.deps.skills.syncAll,
+      instructions: this.deps.skills.instructions.list(),
     };
   }
 

@@ -6,8 +6,11 @@ import opencode from "./assets/agents/opencode.svg";
 import boat from "./assets/providers/boat.svg";
 import boxd from "./assets/providers/boxd.svg";
 import daytona from "./assets/providers/daytona.png";
+import e2b from "./assets/providers/e2b.png";
+import freestyle from "./assets/providers/freestyle.png";
 import instabox from "./assets/providers/instabox.svg";
 import railway from "./assets/providers/railway.svg";
+import superserve from "./assets/providers/superserve.svg";
 
 /** The VM Bridge mark: a bridge between your device and a VM. Same drawing as assets/logo.svg. */
 export function Logo({ className }: { className?: string }) {
@@ -31,6 +34,9 @@ const providerLogos: Record<string, { src: string; tile: string; inset: string }
   instabox: { src: instabox, tile: "bg-black", inset: "" },
   railway: { src: railway, tile: "bg-[#13111c]", inset: "p-[20%]" },
   daytona: { src: daytona, tile: "bg-black", inset: "" },
+  e2b: { src: e2b, tile: "bg-black", inset: "" },
+  freestyle: { src: freestyle, tile: "bg-white", inset: "p-[18%]" },
+  superserve: { src: superserve, tile: "bg-[#141414]", inset: "" },
 };
 
 export function ProviderLogo({ id, className }: { id: ProviderId | string; className?: string }) {

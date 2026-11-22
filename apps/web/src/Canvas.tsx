@@ -1,9 +1,8 @@
-import { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { createContext, useContext, type ReactNode, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   Background,
   BackgroundVariant,
   BaseEdge,
-  EdgeLabelRenderer,
   getBezierPath,
   Handle,
   Panel,
@@ -17,8 +16,8 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Add01Icon, Cancel01Icon, CenterFocusIcon, Delete02Icon, Folder01Icon, LaptopIcon, Message01Icon, Moon02Icon, PowerIcon, ZoomInIcon, ZoomOutIcon } from "@hugeicons/core-free-icons";
-import type { ClientInfo, Overview, ProjectInfo, TrafficEvent, VmInfo, VmState } from "@vmbridge/contracts";
+import { Add01Icon, Alert02Icon, Cancel01Icon, CenterFocusIcon, Delete02Icon, Folder01Icon, InformationCircleIcon, LaptopIcon, Message01Icon, Moon02Icon, PowerIcon, ZoomInIcon, ZoomOutIcon } from "@hugeicons/core-free-icons";
+import { vmSizes, type ClientInfo, type Overview, type ProjectInfo, type ProviderId, type TrafficEvent, type Usage, type VmInfo, type VmSize, type VmState, type VmStats } from "@vmbridge/contracts";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,18 +30,30 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { toast } from "sonner";
 import { useAction } from "@/hooks/use-action";
 import { cn } from "@/lib/utils";
 import { ago, api, useTick } from "./api.ts";
 import { Logo, ProviderLogo } from "./brand.tsx";
 
-/** Requests in this window count toward the per-minute rate on each connection. */
-const rateWindowMs = 60_000;
 /** A connection animates while it carried a request this recently. */
 const flowWindowMs = 8_000;
 
@@ -57,8 +68,6 @@ export const vmStates: Record<VmState, { label: string; dot: string; text: strin
 };
 
 type Flow = {
-  /** Requests in the last minute. */
-  rate: number;
   /** Data is moving right now. */
   flowing: boolean;
   /** Both ends are up; drawn solid instead of dashed. */
@@ -66,7 +75,7 @@ type Flow = {
 };
 
 type DeviceNode = Node<{ client: ClientInfo }, "device">;
-type BridgeNode = Node<{ overview: Overview; rate: number }, "bridge">;
+type BridgeNode = Node<{ overview: Overview }, "bridge">;
 type VmNode = Node<{ vm: VmInfo; projects: ProjectInfo[]; selected: boolean }, "vm">;
 type EmptyNode = Node<{ label: string }, "empty">;
 type FlowEdge = Edge<Flow, "flow">;
@@ -122,8 +131,7 @@ function DeviceCard({ data }: NodeProps<DeviceNode>) {
 }
 
 function BridgeCard({ data }: NodeProps<BridgeNode>) {
-  const { overview, rate } = data;
-  const provider = overview.provider?.active ? overview.provider : null;
+  const { overview } = data;
   const stacked = useContext(Stacked);
   return (
     <div className="w-72 rounded-xl border border-primary/40 bg-card shadow-[0_0_0_4px_color-mix(in_oklab,var(--primary)_10%,transparent)]">
@@ -134,18 +142,8 @@ function BridgeCard({ data }: NodeProps<BridgeNode>) {
           <div className="font-semibold">VM Bridge</div>
           <div className="font-mono text-xs text-muted-foreground">v{overview.bridge.version}</div>
         </div>
-        <span className="font-mono text-xs text-muted-foreground">{rate > 0 ? `${rate}/min` : "idle"}</span>
       </div>
-      <div className="flex items-center gap-2 border-t px-3.5 py-2.5 text-[13px] text-muted-foreground">
-        {provider ? (
-          <>
-            <ProviderLogo id={provider.id} className="size-4 rounded" />
-            {provider.label}
-          </>
-        ) : (
-          "No provider yet"
-        )}
-      </div>
+      {overview.providers.length === 0 && <div className="border-t px-3.5 py-2.5 text-[13px] text-muted-foreground">No provider yet</div>}
       <Handle type="source" position={stacked ? Position.Bottom : Position.Right} style={stacked ? stackedHandle : undefined} isConnectable={false} className={hidden} />
     </div>
   );
@@ -155,8 +153,8 @@ function VmCard({ data }: NodeProps<VmNode>) {
   const { vm, projects, selected } = data;
   const state = vmStates[vm.state];
   const settling = vm.state === "provisioning" || vm.state === "starting";
-  const models = [...new Set(vm.sessions.map((session) => session.model).filter(Boolean))];
-  const working = vm.sessions.filter((session) => session.status === "running").length;
+  // Three rows at most, so every card keeps the height the layout spaces them by.
+  const shown = projects.length > 3 ? projects.slice(0, 2) : projects;
   return (
     <div
       className={cn(
@@ -166,34 +164,53 @@ function VmCard({ data }: NodeProps<VmNode>) {
       )}
     >
       <Handle type="target" position={Position.Left} isConnectable={false} className={hidden} />
-      <div className="flex flex-col gap-3 p-3.5">
-        <div className="flex items-center gap-3">
-          <ProviderLogo id={vm.provider} className="size-9 rounded-lg" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate font-medium">{vm.name}</div>
-            <div className="truncate text-xs text-muted-foreground">{vm.sizeLabel}</div>
-          </div>
+      <div className="flex items-center gap-3 p-3.5">
+        <ProviderLogo id={vm.provider} className="size-9 rounded-lg" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-medium">{vm.name}</div>
+          <div className="truncate text-xs text-muted-foreground">{vm.sizeLabel}</div>
         </div>
-        <Status {...state} />
-        <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-          <HugeiconsIcon icon={Message01Icon} className="size-4 text-faint" strokeWidth={1.75} />
-          {vm.sessions.length} {vm.sessions.length === 1 ? "session" : "sessions"}
-          {working > 0 && <span className="text-warning">· {working} working</span>}
-        </div>
-        {models.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {models.slice(0, 3).map((model) => (
-              <Badge key={model} variant="secondary" className="font-mono font-normal">
-                {model}
-              </Badge>
-            ))}
-          </div>
+        {vm.sessions.length > 0 && (
+          <span className="flex shrink-0 items-center gap-1.5 self-start text-xs text-muted-foreground" title={`${vm.sessions.length} ${vm.sessions.length === 1 ? "session" : "sessions"}`}>
+            <HugeiconsIcon icon={Message01Icon} className="size-3.5 text-faint" strokeWidth={1.75} />
+            {vm.sessions.length}
+          </span>
         )}
+      </div>
+      <div className="flex flex-col gap-1.5 px-3.5 pb-3 text-[13px] text-muted-foreground">
+        {shown.map((project) => (
+          <span key={project.id} className="flex min-w-0 items-center gap-2">
+            <HugeiconsIcon icon={Folder01Icon} className="size-4 shrink-0 text-faint" strokeWidth={1.75} />
+            <span className="truncate">{project.title}</span>
+            {project.vmIds.length > 1 && (
+              <span className="ml-auto shrink-0 text-xs text-faint">
+                VM {project.vmIds.indexOf(vm.id) + 1} of {project.vmIds.length}
+              </span>
+            )}
+          </span>
+        ))}
+        {projects.length > shown.length && <span className="pl-6 text-faint">+{projects.length - shown.length} more</span>}
+        {projects.length === 0 && <span className="text-faint">No repository yet</span>}
         {vm.state === "error" && vm.error && <p className="line-clamp-2 text-xs text-destructive">{vm.error}</p>}
       </div>
-      <div className="flex items-center gap-2 rounded-b-xl border-t bg-muted/40 px-3.5 py-2.5 text-[13px] text-muted-foreground">
-        <HugeiconsIcon icon={Folder01Icon} className="size-4 shrink-0 text-faint" strokeWidth={1.75} />
-        <span className="truncate">{projects.length ? projects.map((project) => project.title).join(", ") : "No repository yet"}</span>
+      <div className="flex items-center justify-between gap-3 rounded-b-xl border-t px-3.5 py-2.5">
+        <Status {...state} />
+        {vm.stats?.highMemory ? (
+          <span className="flex items-center gap-1.5 text-[13px] text-destructive" title={vm.stats.memory ? `${usage(vm.stats.memory)} used` : undefined}>
+            <HugeiconsIcon icon={Alert02Icon} className="size-3.5" strokeWidth={2} />
+            High memory
+          </span>
+        ) : vm.updatePending ? (
+          <span className="text-[13px] text-muted-foreground" title={vm.state === "sleeping" ? "It gets the latest sign-ins and variables when it wakes." : "It gets the latest sign-ins and variables once nothing runs on it."}>
+            Update pending
+          </span>
+        ) : (
+          vm.skillsPending && (
+            <span className="text-[13px] text-muted-foreground" title={vm.state === "sleeping" ? "It gets the latest skills and AGENTS.md when it wakes." : undefined}>
+              Sync pending
+            </span>
+          )
+        )}
       </div>
     </div>
   );
@@ -213,10 +230,9 @@ const reducedMotion = typeof matchMedia === "function" && matchMedia("(prefers-r
 
 /** A connection. While requests pass, dots travel along it in the direction the requests go. */
 function FlowEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps<FlowEdge>) {
-  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
-  const { rate = 0, flowing = false, live = false } = data ?? {};
-  const stacked = useContext(Stacked);
-  const dots = flowing && !reducedMotion ? Math.min(3, 1 + Math.floor(rate / 30)) : 0;
+  const [path] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+  const { flowing = false, live = false } = data ?? {};
+  const dots = flowing && !reducedMotion ? 2 : 0;
   const seconds = 1.6;
   return (
     <>
@@ -234,16 +250,6 @@ function FlowEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition, 
           <animateMotion dur={`${seconds}s`} begin={`${(index * seconds) / dots}s`} repeatCount="indefinite" path={path} />
         </circle>
       ))}
-      {rate > 0 && !stacked && (
-        <EdgeLabelRenderer>
-          <div
-            className="absolute rounded-md border bg-card px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
-            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
-          >
-            {rate}/min
-          </div>
-        </EdgeLabelRenderer>
-      )}
     </>
   );
 }
@@ -297,26 +303,29 @@ function Controls({ fitKey }: { fitKey: string }) {
 }
 
 export function Canvas({ overview, traffic, onPair }: { overview: Overview; traffic: TrafficEvent[]; onPair: () => void }) {
-  const now = useTick(2_000);
+  const now = useTick(1_000);
   const [selected, setSelected] = useState<string | null>(null);
-  const create = useAction();
+  const [menuTarget, setMenuTarget] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<VmInfo | null>(null);
   const vm = overview.vms.find((entry) => entry.id === selected) ?? null;
   const narrow = useNarrow();
+  // The nodes are rebuilt every tick. Without their measured sizes React Flow hides each card until it
+  // measures it again, which waits for a paint; a window on another desktop gets none and stays blank.
+  const [sizes, setSizes] = useState<Record<string, { width: number; height: number }>>({});
 
   const { nodes, edges } = useMemo(() => {
-    const recent = traffic.filter((event) => now - event.at < rateWindowMs && event.kind !== "system");
-    const flow = (match: (event: TrafficEvent) => boolean) => {
-      const events = recent.filter(match);
-      return { rate: events.length, flowing: events.some((event) => now - event.at < flowWindowMs) };
-    };
+    const recent = traffic.filter((event) => now - event.at < flowWindowMs && event.kind !== "system");
+    const flow = (match: (event: TrafficEvent) => boolean) => ({ flowing: recent.some(match) });
     const nodes: Node[] = [];
     const edges: FlowEdge[] = [];
     const clients = overview.clients;
     // Stacked: devices from the top, the bridge under them, then VMs, indented so connections fit on the left.
     const deviceCount = Math.max(clients.length, 1);
     const bridgeTop = deviceCount * 84 + 24;
+    // The bridge is taller while it says "No provider yet", so it is placed by its measured height.
+    const bridgeHeight = sizes.bridge?.height ?? 66;
     const devicePosition = (index: number) => (narrow ? { x: 48, y: index * 84 } : { x: 0, y: column(deviceCount, 68, 20)(index) });
-    const vmPosition = (index: number) => (narrow ? { x: 48, y: bridgeTop + 148 + index * 236 } : { x: 780, y: column(Math.max(overview.vms.length, 1), 190, 28)(index) });
+    const vmPosition = (index: number) => (narrow ? { x: 48, y: bridgeTop + bridgeHeight + 40 + index * 236 } : { x: 780, y: column(Math.max(overview.vms.length, 1), 190, 28)(index) });
     if (clients.length === 0) nodes.push({ id: "empty-devices", type: "empty", position: devicePosition(0), data: { label: "Pair a device to start" } });
     clients.forEach((client, index) => {
       nodes.push({ id: `device-${client.id}`, type: "device", position: devicePosition(index), data: { client } });
@@ -328,12 +337,18 @@ export function Canvas({ overview, traffic, onPair }: { overview: Overview; traf
         data: { ...flow((event) => event.clientId === client.id), live: client.connected },
       });
     });
-    nodes.push({ id: "bridge", type: "bridge", position: narrow ? { x: 0, y: bridgeTop } : { x: 380, y: -60 }, data: { overview, rate: recent.length } });
+    nodes.push({ id: "bridge", type: "bridge", position: narrow ? { x: 0, y: bridgeTop } : { x: 380, y: -bridgeHeight / 2 }, data: { overview } });
     if (overview.vms.length === 0) {
       const position = vmPosition(0);
       nodes.push({ id: "empty-vms", type: "empty", position: narrow ? position : { ...position, y: position.y + 60 }, data: { label: "VMs appear when work starts" } });
     }
-    overview.vms.forEach((entry, index) => {
+    // A repository's VMs sit together, in the order it got them.
+    const rank = (vm: VmInfo) => {
+      const index = overview.projects.findIndex((project) => project.vmIds.includes(vm.id));
+      return index < 0 ? [Infinity, 0] : [index, overview.projects[index]!.vmIds.indexOf(vm.id)];
+    };
+    const vms = overview.vms.map((vm) => ({ vm, rank: rank(vm) })).sort((a, b) => a.rank[0]! - b.rank[0]! || a.rank[1]! - b.rank[1]!);
+    vms.forEach(({ vm: entry }, index) => {
       const projects = overview.projects.filter((project) => entry.projects.includes(project.id));
       const live = entry.state === "ready" || entry.state === "busy";
       const traffic = flow((event) => event.vmId === entry.id);
@@ -346,50 +361,280 @@ export function Canvas({ overview, traffic, onPair }: { overview: Overview; traf
         data: { ...traffic, flowing: traffic.flowing || entry.state === "busy", live },
       });
     });
-    return { nodes, edges };
-  }, [overview, traffic, now, selected, narrow]);
+    return { nodes: nodes.map((node) => ({ ...node, measured: sizes[node.id] })), edges };
+  }, [overview, traffic, now, selected, narrow, sizes]);
 
   return (
     <div className="relative h-full">
-      <Stacked.Provider value={narrow}>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          zoomOnDoubleClick={false}
-          fitView
-          fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
-          minZoom={0.3}
-          maxZoom={1.5}
-          onNodeClick={(_, node) => {
-            if (node.type === "vm") setSelected(node.id === selected ? null : node.id);
-            if (node.id === "empty-devices") onPair();
-          }}
-          onPaneClick={() => setSelected(null)}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} />
-          <Controls fitKey={`${nodes.length}-${narrow}`} />
-          <Panel position="top-right" className="!m-4 flex flex-col items-end gap-2">
-            <Button
-              variant="outline"
-              size="lg"
-              className="bg-card"
-              disabled={create.busy || !overview.setup.provider}
-              title={overview.setup.provider ? undefined : "Choose a provider first"}
-              onClick={() => void create.run(() => api("/vms", { body: {} }))}
-            >
-              <HugeiconsIcon icon={Add01Icon} data-icon="inline-start" strokeWidth={2} />
-              New VM
-            </Button>
-            {create.error && <p className="max-w-64 text-right text-xs text-destructive">{create.error}</p>}
-          </Panel>
-        </ReactFlow>
-      </Stacked.Provider>
+      <CanvasMenu overview={overview} target={overview.vms.find((entry) => entry.id === menuTarget) ?? null} onDetails={setSelected} onPair={onPair} onDelete={setDeleting}>
+        <Stacked.Provider value={narrow}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            onNodesChange={(changes) => {
+              const measured = changes.getByType("dimensions").flatMap((change) => (change.dimensions ? [[change.id, change.dimensions] as const] : []));
+              if (measured.length) setSizes((current) => ({ ...current, ...Object.fromEntries(measured) }));
+            }}
+            nodesDraggable={false}
+            nodesConnectable={false}
+            zoomOnDoubleClick={false}
+            fitView
+            fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
+            minZoom={0.3}
+            maxZoom={1.5}
+            onNodeClick={(_, node) => {
+              if (node.type === "vm") setSelected(node.id === selected ? null : node.id);
+              if (node.id === "empty-devices") onPair();
+            }}
+            onPaneClick={() => setSelected(null)}
+            // Picks which menu opens; the right-click then reaches CanvasMenu's trigger.
+            onNodeContextMenu={(_, node) => setMenuTarget(node.type === "vm" ? node.id : null)}
+            onPaneContextMenu={() => setMenuTarget(null)}
+            onEdgeContextMenu={() => setMenuTarget(null)}
+          >
+            <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} />
+            <Controls fitKey={`${nodes.length}-${narrow}`} />
+            <Panel position="top-right" className="!m-4 flex flex-col items-end gap-2">
+              <NewVm overview={overview} />
+            </Panel>
+          </ReactFlow>
+        </Stacked.Provider>
+      </CanvasMenu>
       {vm && <VmDetails key={vm.id} vm={vm} overview={overview} now={now} onClose={() => setSelected(null)} />}
+      <AlertDialog open={Boolean(deleting)} onOpenChange={(open) => !open && setDeleting(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleting?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>Its disk and any work that is not pushed are lost.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (!deleting) return;
+                if (deleting.id === selected) setSelected(null);
+                attempt(api(`/vms/${deleting.id}`, { method: "DELETE" }));
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
+  );
+}
+
+/** Shows a failed menu action as a toast, since a menu has nowhere to show it once closed. */
+const attempt = (work: Promise<unknown>) => void work.catch((error: Error) => toast.error(error.message));
+
+/** Right-click menu: VM actions on a VM card, canvas actions anywhere else. */
+function CanvasMenu({
+  overview,
+  target,
+  onDetails,
+  onPair,
+  onDelete,
+  children,
+}: {
+  overview: Overview;
+  target: VmInfo | null;
+  onDetails: (id: string) => void;
+  onPair: () => void;
+  onDelete: (vm: VmInfo) => void;
+  children: ReactNode;
+}) {
+  const awake = target?.state === "ready" || target?.state === "busy";
+  const settling = target?.state === "provisioning" || target?.state === "starting";
+  const create = (body: object) => attempt(api("/vms", { body }));
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div className="h-full">{children}</div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-52">
+        {target ? (
+          <>
+            <ContextMenuLabel className="truncate">{target.name}</ContextMenuLabel>
+            <ContextMenuItem onSelect={() => onDetails(target.id)}>
+              <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={1.75} />
+              Details
+            </ContextMenuItem>
+            {awake ? (
+              <ContextMenuItem onSelect={() => attempt(api(`/vms/${target.id}/sleep`, { body: {} }))}>
+                <HugeiconsIcon icon={Moon02Icon} strokeWidth={1.75} />
+                Sleep
+              </ContextMenuItem>
+            ) : (
+              <ContextMenuItem disabled={settling} onSelect={() => attempt(api(`/vms/${target.id}/wake`, { body: {} }))}>
+                <HugeiconsIcon icon={PowerIcon} strokeWidth={1.75} />
+                Wake
+              </ContextMenuItem>
+            )}
+            <ContextMenuSeparator />
+            <ContextMenuItem variant="destructive" onSelect={() => onDelete(target)}>
+              <HugeiconsIcon icon={Delete02Icon} strokeWidth={1.75} />
+              Delete
+            </ContextMenuItem>
+          </>
+        ) : (
+          <>
+            {overview.providers.length > 1 ? (
+              <ContextMenuSub>
+                <ContextMenuSubTrigger>
+                  <HugeiconsIcon icon={Add01Icon} strokeWidth={1.75} />
+                  New VM
+                </ContextMenuSubTrigger>
+                <ContextMenuSubContent className="w-44">
+                  {overview.providers.map((provider) => (
+                    <ContextMenuItem key={provider.id} onSelect={() => create({ provider: provider.id })}>
+                      <ProviderLogo id={provider.id} className="size-4 rounded" />
+                      {provider.label}
+                    </ContextMenuItem>
+                  ))}
+                </ContextMenuSubContent>
+              </ContextMenuSub>
+            ) : (
+              <ContextMenuItem disabled={!overview.setup.provider} onSelect={() => create({})}>
+                <HugeiconsIcon icon={Add01Icon} strokeWidth={1.75} />
+                New VM
+              </ContextMenuItem>
+            )}
+            <ContextMenuItem onSelect={onPair}>
+              <HugeiconsIcon icon={LaptopIcon} strokeWidth={1.75} />
+              Pair a device
+            </ContextMenuItem>
+          </>
+        )}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+/** With one provider, creates a VM there right away. With several, asks which provider and size first. */
+function NewVm({ overview }: { overview: Overview }) {
+  const create = useAction();
+  const [picking, setPicking] = useState(false);
+  const [provider, setProvider] = useState(overview.defaultProvider);
+  const [picked, setSize] = useState(overview.settings.vmSize);
+  const chosen = overview.providers.find((entry) => entry.id === provider) ?? overview.providers[0];
+  const size = picked ?? chosen?.defaultSize;
+  const make = (body: object) => void create.run(() => api("/vms", { body })).then((ok) => ok && setPicking(false));
+  return (
+    <>
+      <Button
+        variant="outline"
+        size="lg"
+        className="bg-card"
+        disabled={create.busy || !overview.setup.provider}
+        title={overview.setup.provider ? undefined : "Add a provider first"}
+        onClick={() => (overview.providers.length > 1 ? setPicking(!picking) : make({}))}
+      >
+        <HugeiconsIcon icon={Add01Icon} data-icon="inline-start" strokeWidth={2} />
+        New VM
+      </Button>
+      {picking && chosen && (
+        <div className="flex w-64 flex-col gap-4 rounded-xl border bg-card p-3.5 shadow-sm">
+          <Field>
+            <FieldLabel htmlFor="new-vm-provider">Provider</FieldLabel>
+            <Select value={chosen.id} onValueChange={(value) => setProvider(value as ProviderId)}>
+              <SelectTrigger id="new-vm-provider" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {overview.providers.map((entry) => (
+                  <SelectItem key={entry.id} value={entry.id}>
+                    <ProviderLogo id={entry.id} className="size-4 rounded" />
+                    {entry.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="new-vm-size">Size</FieldLabel>
+            <Select value={size} onValueChange={(value) => setSize(value as VmSize)}>
+              <SelectTrigger id="new-vm-size" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {vmSizes.map((entry) => (
+                  <SelectItem key={entry} value={entry}>
+                    <span className="capitalize">{entry}</span>
+                    <span className="text-muted-foreground">{chosen.sizes[entry]}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <div className="flex gap-2">
+            <Button size="sm" disabled={create.busy} onClick={() => make({ provider: chosen.id, size })}>
+              Create
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setPicking(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+      {create.error && <p className="max-w-64 text-right text-xs text-destructive">{create.error}</p>}
+    </>
+  );
+}
+
+/** Binary gigabytes, as providers size VMs. One decimal below 10 GB. */
+function usage({ used, total }: Usage) {
+  const digits = total < 10 * 2 ** 30 ? 1 : 0;
+  return `${(used / 2 ** 30).toFixed(digits)} / ${(total / 2 ** 30).toFixed(digits)} GB`;
+}
+
+function Meter({ label, value, share, high }: { label: string; value: string; share: number; high?: boolean }) {
+  const color = high || share >= 0.9 ? "bg-destructive" : share >= 0.75 ? "bg-warning" : "bg-success";
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-baseline justify-between gap-6 text-[13px]">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="truncate font-mono text-xs leading-5">{value}</span>
+      </div>
+      <div className="h-1 overflow-hidden rounded-full bg-accent">
+        <div className={cn("h-full rounded-full", color)} style={{ width: `${Math.min(100, Math.max(0, share * 100))}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function Resources({ stats, now }: { stats: VmStats | null; now: number }) {
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="flex justify-between gap-3 text-xs font-medium text-muted-foreground">
+        Resources
+        {stats && <span className="font-normal text-faint">Updated {ago(stats.at, now)}</span>}
+      </h3>
+      {stats ? (
+        <div className="flex flex-col gap-3">
+          {stats.memory && <Meter label="Memory" value={usage(stats.memory)} share={stats.memory.used / stats.memory.total} high={stats.highMemory} />}
+          {stats.memoryPressure !== null && (
+            <div className="flex items-baseline justify-between gap-6 text-[13px]">
+              <span className="text-muted-foreground">Memory pressure</span>
+              <span className={cn("font-mono text-xs leading-5", stats.memoryPressure >= 10 && "text-destructive")}>{stats.memoryPressure.toFixed(1)}%</span>
+            </div>
+          )}
+          {stats.cpu && (
+            <Meter
+              label="CPU"
+              value={`${Math.round(stats.cpu.usage * 100)}% of ${stats.cpu.cores} ${stats.cpu.cores === 1 ? "core" : "cores"}`}
+              share={stats.cpu.usage}
+            />
+          )}
+          {stats.disk && <Meter label="Disk" value={usage(stats.disk)} share={stats.disk.used / stats.disk.total} />}
+        </div>
+      ) : (
+        <p className="text-[13px] text-muted-foreground">Measuring.</p>
+      )}
+    </section>
   );
 }
 
@@ -398,9 +643,8 @@ function VmDetails({ vm, overview, now, onClose }: { vm: VmInfo; overview: Overv
   const projects = overview.projects.filter((project) => vm.projects.includes(project.id));
   const awake = vm.state === "ready" || vm.state === "busy";
   const settling = vm.state === "provisioning" || vm.state === "starting";
-  const providerLabel = overview.provider?.id === vm.provider ? overview.provider.label : vm.provider;
   const rows: [string, string][] = [
-    ["Provider", providerLabel],
+    ["Provider", vm.providerLabel],
     ["Size", vm.sizeLabel],
     ["Sandbox", vm.sandboxId ?? "Not created"],
     ["T3", vm.t3Version ?? "Not installed"],
@@ -408,6 +652,10 @@ function VmDetails({ vm, overview, now, onClose }: { vm: VmInfo; overview: Overv
     ["Last activity", ago(vm.lastActivityAt, now)],
   ];
   if (vm.sleepsAt) rows.push(["Sleeps", vm.sleepsAt <= now ? "Soon" : `In ${Math.ceil((vm.sleepsAt - now) / 60_000)} min`]);
+  // A fresh reading on open. It arrives through the overview, and the server never wakes a VM for it.
+  useEffect(() => {
+    if (awake) void api(`/vms/${vm.id}/stats`).catch(() => {});
+  }, [vm.id, awake]);
 
   return (
     <aside className="absolute inset-x-2 bottom-2 z-10 flex max-h-[65%] flex-col rounded-xl border bg-card shadow-2xl shadow-black sm:inset-x-auto sm:top-3 sm:right-3 sm:bottom-3 sm:max-h-none sm:w-[400px]">
@@ -432,6 +680,7 @@ function VmDetails({ vm, overview, now, onClose }: { vm: VmInfo; overview: Overv
           ))}
         </dl>
         {vm.error && <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-[13px] text-destructive">{vm.error}</p>}
+        {awake && <Resources stats={vm.stats} now={now} />}
         <section className="flex flex-col gap-2">
           <h3 className="text-xs font-medium text-muted-foreground">Repositories</h3>
           {projects.length === 0 && <p className="text-[13px] text-muted-foreground">None yet. Clone one from T3.</p>}
@@ -458,7 +707,7 @@ function VmDetails({ vm, overview, now, onClose }: { vm: VmInfo; overview: Overv
                 <ItemContent>
                   <ItemTitle className="w-full justify-between">
                     <span className="truncate">{session.title}</span>
-                    <Badge variant={session.status === "running" ? "default" : "secondary"}>{session.status}</Badge>
+                    <Badge variant={session.working ? "default" : "secondary"}>{session.status}</Badge>
                   </ItemTitle>
                   <ItemDescription className="font-mono text-xs">{[session.provider, session.model].filter(Boolean).join(" · ") || "No model"}</ItemDescription>
                 </ItemContent>

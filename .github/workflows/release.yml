@@ -1,5 +1,6 @@
 # Builds VM Bridge for macOS and Linux and attaches the files to a GitHub release.
-# Push a tag like v0.1.0 to publish. install.sh downloads from the latest release.
+# Push a tag like v0.1.0 to publish. install.sh downloads from the latest release
+# and checks it against SHA256SUMS.
 name: Release
 
 on:
@@ -10,7 +11,19 @@ permissions:
   contents: write
 
 jobs:
+  # A tag must pass the same checks as CI before anything is built or published.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+
   build:
+    needs: check
     strategy:
       matrix:
         include:
@@ -40,6 +53,11 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Write SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum vmbridge-* > SHA256SUMS
+          cat SHA256SUMS
       - run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}

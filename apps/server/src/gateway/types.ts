@@ -53,11 +53,9 @@ export const threadsOf = (shell: Shell | undefined) => [...(shell?.threads ?? []
 
 const busy = new Set(["preparing", "queued", "starting", "running", "waiting", "pending"]);
 
-/** Running turns, queued work, and pending approvals keep a VM awake. Open UIs do not. */
-export const hasLiveWork = (shell: Shell) =>
-  threadsOf(shell).some(
-    (thread) =>
-      Boolean(thread.activeRunId || thread.pendingRuntimeRequest) ||
-      busy.has(String(thread.status)) ||
-      busy.has(String(thread.activityRunStatus)),
-  );
+/** A running turn, queued work, or a pending approval. */
+export const isWorking = (thread: Wire) =>
+  Boolean(thread.activeRunId || thread.pendingRuntimeRequest) || busy.has(String(thread.status)) || busy.has(String(thread.activityRunStatus));
+
+/** Working threads keep a VM awake. Open UIs do not. */
+export const hasLiveWork = (shell: Shell) => threadsOf(shell).some(isWorking);

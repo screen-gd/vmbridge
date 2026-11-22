@@ -31,7 +31,10 @@ export interface Driver {
   verify(): Promise<void>;
   /** Choices for a `select` field, such as Boat environments. */
   options(field: string): Promise<SelectOption[]>;
-  create(input: CreateVm): Promise<Box>;
+  /** With `from`, starts from a base snapshot `snapshot` made, which fixes the machine size. */
+  create(input: CreateVm, from?: string): Promise<Box>;
+  /** Saves a VM's disk as a base snapshot new VMs can start from. Absent when the provider cannot. */
+  snapshot?(box: Box): Promise<string>;
   connect(sandboxId: string): Promise<Box>;
   /** Provider state of every sandbox carrying `labels`. Absent IDs no longer exist. */
   states(labels: Record<string, string>): Promise<Map<string, ProviderState>>;
@@ -41,6 +44,8 @@ export interface Driver {
   /** Extends provider-side auto-stop timers while agents work. */
   keepAlive(box: Box): Promise<void>;
   destroy(sandboxId: string): Promise<void>;
+  /** Deletes a checkpoint `sleep` made, or a base snapshot `snapshot` made, once nothing needs it. One already gone is fine. */
+  deleteCheckpoint(checkpoint: string): Promise<void>;
 }
 
 export interface ProviderDefinition {
@@ -50,6 +55,8 @@ export interface ProviderDefinition {
   fields: ProviderField[];
   features: ProviderFeatures;
   sizes: Record<VmSize, string>;
+  /** The size new VMs get unless a setting or repository rule picks one: the closest to 2 vCPU and 8 GB. */
+  defaultSize: VmSize;
   open(config: ProviderConfig): Driver;
 }
 
