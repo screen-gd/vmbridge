@@ -12,7 +12,11 @@ export function useInView(ref: RefObject<Element | null>, rootMargin = "0px") {
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
-    const observer = new IntersectionObserver(([entry]) => setInView(entry.isIntersecting), { rootMargin });
+    const observer = new IntersectionObserver(
+      // One callback can carry several queued records for the element; only the newest is current.
+      (entries) => setInView(entries[entries.length - 1].isIntersecting),
+      { rootMargin },
+    );
     observer.observe(element);
     return () => observer.disconnect();
   }, [ref, rootMargin]);

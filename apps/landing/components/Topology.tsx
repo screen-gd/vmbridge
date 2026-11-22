@@ -126,12 +126,12 @@ function At({ point, layout, children }: { point: Point; layout: Layout; childre
   );
 }
 
-/** A paired device, a pill with the T3 Code mark. */
-function Device({ name }: { name: string }) {
+/** A paired device, a pill with the T3 Code mark. `large` is the hero sizing. */
+function Device({ name, large = false }: { name: string; large?: boolean }) {
   return (
-    <div className="flex items-center gap-2 rounded-md bg-muted px-2.5 py-2">
-      <T3Logo className="size-6" />
-      <span className="text-[13px] font-medium">{name}</span>
+    <div className={`flex items-center gap-2 rounded-md bg-muted ${large ? "px-3.5 py-2.5" : "px-2.5 py-2"}`}>
+      <T3Logo className={large ? "size-7" : "size-6"} />
+      <span className={`font-medium ${large ? "text-sm" : "text-[13px]"}`}>{name}</span>
     </div>
   );
 }
@@ -188,8 +188,10 @@ const seedRows: LogRow[] = [
  * The wiring diagram row: devices to VM Bridge to the project VMs, with the event log beside it.
  * `stacked` renders the single-column variant used inside the docs page's bordered box.
  * `log={false}` drops the events panel so the diagram takes the whole row.
+ * `hero` fills its parent instead of using the fixed row heights, centres the diagram
+ * at 72rem, and enlarges the device and bridge nodes for the landing hero stage.
  */
-export function Topology({ stacked = false, log = true }: { stacked?: boolean; log?: boolean }) {
+export function Topology({ stacked = false, log = true, hero = false }: { stacked?: boolean; log?: boolean; hero?: boolean }) {
   const [vms, setVms] = useState(initialVms);
   const [rows, setRows] = useState(seedRows);
   const nextRow = useRef(seedRows.length);
@@ -217,6 +219,7 @@ export function Topology({ stacked = false, log = true }: { stacked?: boolean; l
     return () => clearTimeout(timer);
   }, [wires, reduced]);
   const packets = flow && !reduced && phase !== "asleep";
+  const ring = !reduced && phase !== "asleep";
   const shown = stacked ? rows.slice(-3) : rows.slice(-8);
 
   const pushRow = (project: string, state: string, detail: string) =>
@@ -243,12 +246,18 @@ export function Topology({ stacked = false, log = true }: { stacked?: boolean; l
   };
 
   return (
-    <div ref={panel} id="topology" className={`grid grid-cols-[minmax(0,1fr)] ${stacked || !log ? "" : "lg:grid-cols-[minmax(0,1fr)_26rem]"}`}>
-      <div>
+    <div
+      ref={panel}
+      id="topology"
+      className={
+        hero ? "md:flex md:flex-1" : `grid grid-cols-[minmax(0,1fr)] ${stacked || !log ? "" : "lg:grid-cols-[minmax(0,1fr)_26rem]"}`
+      }
+    >
+      <div className={hero ? "mx-auto w-full max-w-[72rem] md:flex md:min-h-0 md:flex-1 md:flex-col" : undefined}>
         {/* Both layouts render in the initial HTML; CSS picks one per viewport so
             phones never receive the desktop coordinates, even with JS disabled.
             `hidden` also keeps the other copy's buttons out of the a11y tree. */}
-        <div className="relative md:hidden" style={{ aspectRatio: `${layouts.narrow.w} / ${layouts.narrow.h}` }}>
+        <div className={`relative md:hidden ${hero ? "mx-auto max-w-[26rem]" : ""}`} style={{ aspectRatio: `${layouts.narrow.w} / ${layouts.narrow.h}` }}>
           <svg viewBox={`0 0 ${layouts.narrow.w} ${layouts.narrow.h}`} preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
             <Wire d={wire(layouts.narrow.devices.mac, layouts.narrow.bridge, false)} kind="active" packets={packets} drawn={wires} />
             <Wire d={wire(layouts.narrow.devices.phone, layouts.narrow.bridge, false)} kind="active" packets={packets} drawn={wires} />
@@ -286,10 +295,20 @@ export function Topology({ stacked = false, log = true }: { stacked?: boolean; l
           ))}
         </div>
 
-        <div className="relative hidden h-[24rem] md:block lg:h-[20rem] xl:h-[24rem] xl:short:h-[21rem]">
-          <span className="absolute top-3 left-[14%] -translate-x-1/2 font-mono text-[13px] text-faint">{copy.diagram.devices}</span>
-          <span className="absolute top-3 left-[50%] -translate-x-1/2 font-mono text-[13px] text-faint">{copy.diagram.bridge}</span>
-          <span className="absolute top-3 left-[84%] -translate-x-1/2 font-mono text-[13px] text-faint">{copy.diagram.vms}</span>
+        <div
+          className={`relative hidden md:block ${
+            hero ? "md:flex-1" : "h-[24rem] lg:h-[20rem] xl:h-[24rem] xl:short:h-[21rem]"
+          }`}
+        >
+          <span className={`absolute ${hero ? "top-0" : "top-3"} left-[14%] -translate-x-1/2 font-mono text-[13px] text-faint`}>
+            {copy.diagram.devices}
+          </span>
+          <span className={`absolute ${hero ? "top-0" : "top-3"} left-[50%] -translate-x-1/2 font-mono text-[13px] text-faint`}>
+            {copy.diagram.bridge}
+          </span>
+          <span className={`absolute ${hero ? "top-0" : "top-3"} left-[84%] -translate-x-1/2 font-mono text-[13px] text-faint`}>
+            {copy.diagram.vms}
+          </span>
           <svg viewBox={`0 0 ${layouts.wide.w} ${layouts.wide.h}`} preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
             <Wire d={wire(layouts.wide.devices.mac, layouts.wide.bridge, true)} kind="active" packets={packets} drawn={wires} />
             <Wire d={wire(layouts.wide.devices.phone, layouts.wide.bridge, true)} kind="active" packets={packets} drawn={wires} />
@@ -305,14 +324,22 @@ export function Topology({ stacked = false, log = true }: { stacked?: boolean; l
           </svg>
 
           <At point={layouts.wide.devices.mac} layout={layouts.wide}>
-            <Device name="MacBook" />
+            <Device name="MacBook" large={hero} />
           </At>
           <At point={layouts.wide.devices.phone} layout={layouts.wide}>
-            <Device name="iPhone" />
+            <Device name="iPhone" large={hero} />
           </At>
           <At point={layouts.wide.bridge} layout={layouts.wide}>
             <div className="flex flex-col items-center gap-1.5">
-              <Logo className="size-12" />
+              <div className="relative">
+                {hero && ring ? (
+                  <span
+                    aria-hidden
+                    className="absolute -inset-2 animate-[pulse-ring_3.4s_ease-out_infinite] rounded-full ring-2 ring-primary/30"
+                  />
+                ) : null}
+                <Logo className={hero ? "size-16" : "size-12"} />
+              </div>
               <span className="rounded bg-background px-1 font-mono text-[13px] text-faint">:3774</span>
             </div>
           </At>

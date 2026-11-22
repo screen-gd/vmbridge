@@ -249,3 +249,15 @@ html.lenis body {
     transform: scaleY(0);
   }
 }
+
+/* One violet ring expanding slowly behind the hero diagram's bridge tile. */
+@keyframes pulse-ring {
+  from {
+    transform: scale(0.7);
+    opacity: 0.45;
+  }
+  to {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+}

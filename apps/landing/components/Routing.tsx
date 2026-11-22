@@ -5,7 +5,6 @@ import { copy } from "@/lib/copy";
 import { bridgeLatency, routes, vmLatency } from "@/lib/data";
 import { useInView, useReducedMotion } from "@/lib/hooks";
 import { Section } from "./Section";
-import { Topology } from "./Topology";
 
 /** The calls each latency figure answers for: bridge-side or VM-side RPC names. */
 const callsOf = (kind: "bridge" | "vm") => routes.filter((route) => route.kind === kind).map((route) => route.call);
@@ -46,42 +45,36 @@ function CountUp({ text, className = "" }: { text: string; className?: string })
   );
 }
 
-/** The wiring diagram on the right, the two latency figures stacked in the left column. */
+/** The two latency figures as card panels on the right, title and body on the left. */
 export function Routing() {
   return (
-    <Section
-      id="routing"
-      title={copy.routing.title}
-      body={copy.routing.body}
-      side={
-        <div className="grid gap-8 lg:grid-cols-2 xl:grid-cols-1 xl:short:gap-4">
-          <div>
-            <div className="font-mono text-[2rem] leading-none tracking-tight">
-              <CountUp text={bridgeLatency} />
-            </div>
-            <p className="mt-2 text-base leading-relaxed text-muted-foreground">{copy.routing.notes.bridge}</p>
-            <div className="mt-2 font-mono text-[13px] leading-6 text-faint">
-              {callsOf("bridge").map((call) => (
-                <div key={call}>{call}</div>
-              ))}
-            </div>
+    <Section id="routing" title={copy.routing.title} body={copy.routing.body}>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="rounded-lg bg-card p-6 sm:p-8">
+          {/* 3rem is the largest size that keeps "156 to 320 ms" on one line inside
+              a half-width panel at the standard desktop viewports. */}
+          <div className="font-mono text-[3rem] leading-none tracking-tight">
+            <CountUp text={bridgeLatency} />
           </div>
-          <div>
-            <div className="font-mono text-[2rem] leading-none tracking-tight text-primary">
-              <CountUp text={vmLatency} />
-            </div>
-            <p className="mt-2 text-base leading-relaxed text-muted-foreground">{copy.routing.notes.vm}</p>
-            <div className="mt-2 font-mono text-[13px] leading-6 text-faint">
-              {callsOf("vm").map((call) => (
-                <div key={call}>{call}</div>
-              ))}
-            </div>
+          <p className="mt-3 text-base leading-relaxed text-muted-foreground">{copy.routing.notes.bridge}</p>
+          <div className="mt-3 font-mono text-[13px] leading-6 text-faint">
+            {callsOf("bridge").map((call) => (
+              <div key={call}>{call}</div>
+            ))}
           </div>
         </div>
-      }
-    >
-      <Topology log={false} />
-      <div className="mt-4 hidden text-center font-mono text-[13px] text-muted-foreground [.js_&]:block">{copy.hero.hint}</div>
+        <div className="rounded-lg bg-card p-6 sm:p-8">
+          <div className="font-mono text-[3rem] leading-none tracking-tight text-primary">
+            <CountUp text={vmLatency} />
+          </div>
+          <p className="mt-3 text-base leading-relaxed text-muted-foreground">{copy.routing.notes.vm}</p>
+          <div className="mt-3 font-mono text-[13px] leading-6 text-faint">
+            {callsOf("vm").map((call) => (
+              <div key={call}>{call}</div>
+            ))}
+          </div>
+        </div>
+      </div>
     </Section>
   );
 }
