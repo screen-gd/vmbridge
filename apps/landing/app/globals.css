@@ -58,6 +58,12 @@
   ::selection {
     background: color-mix(in oklab, var(--primary) 35%, transparent);
   }
+  /* With JavaScript off, every accordion answer shows open. The !important is
+     required: preflight's [hidden] rule is important too, and important rules
+     prefer the earlier base layer over utilities. */
+  html:not(.js) [data-slot="accordion-content"][hidden] {
+    display: block !important;
+  }
 }
 
 /* Short viewports: at xl and up, tighten sections so a split still fits one screen. */

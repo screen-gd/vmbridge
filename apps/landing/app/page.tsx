@@ -12,7 +12,7 @@ import { Screens } from "@/components/Screens";
 import { LandingMain, SiteStateProvider } from "@/components/SiteState";
 import { StatusLine } from "@/components/StatusLine";
 import { Steps } from "@/components/Steps";
-import { faq, github } from "@/lib/data";
+import { github } from "@/lib/data";
 import { openGraph, site } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 
 const mit = "https://opensource.org/licenses/MIT";
 
-// The app, its source code and the questions answered on this page, for search and answer engines.
+// The app and its source code, for search and answer engines. The FAQPage block lives on /faq.
 const structuredData = {
   "@context": "https://schema.org",
   "@graph": [
@@ -51,15 +51,6 @@ const structuredData = {
       programmingLanguage: "TypeScript",
       license: mit,
       targetProduct: { "@id": `${site.url}/#app` },
-    },
-    {
-      "@type": "FAQPage",
-      "@id": `${site.url}/#faq`,
-      mainEntity: faq.map(({ question, answer }) => ({
-        "@type": "Question",
-        name: question,
-        acceptedAnswer: { "@type": "Answer", text: answer.replaceAll("`", "") },
-      })),
     },
   ],
 };

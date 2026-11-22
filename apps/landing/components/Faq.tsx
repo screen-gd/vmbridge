@@ -1,10 +1,12 @@
+import Link from "next/link";
 import { copy } from "@/lib/copy";
-import { faq } from "@/lib/data";
-import { FaqItem } from "./FaqItem";
+import { faq, featuredFaq } from "@/lib/data";
+import { secondaryButton } from "@/lib/styles";
 import { Section } from "./Section";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 
-/** Plain text with `backticks` shown as code. */
-function Text({ text }: { text: string }) {
+/** Plain text with `backticks` shown as code. Shared by the home FAQ and /faq. */
+export function Text({ text }: { text: string }) {
   return text.split("`").map((part, i) =>
     i % 2 ? (
       <code key={i} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em] text-foreground">
@@ -16,28 +18,33 @@ function Text({ text }: { text: string }) {
   );
 }
 
-/** The questions from data.faq in two independent columns from lg; every item starts closed. */
+/**
+ * The five featured questions, one open at a time with the first open. `keepMounted`
+ * keeps closed answers in the server HTML for search engines, and the accordion
+ * panel's no-JS rule shows them all when JavaScript is off.
+ */
 export function Faq() {
-  const left = faq.slice(0, 7);
-  const right = faq.slice(7);
   return (
-    <Section id="faq" title={copy.faq.title} split={false}>
-      <div className="lg:grid lg:grid-cols-2 lg:gap-x-16">
-        <div>
-          {left.map(({ question, answer }, i) => (
-            <FaqItem key={question} number={i + 1} question={question}>
+    <Section
+      id="faq"
+      title={copy.faq.title}
+      splitAt="lg"
+      side={
+        <Link href="/faq" className={secondaryButton}>
+          {copy.faq.all.replace("{n}", String(faq.length))}
+        </Link>
+      }
+    >
+      <Accordion defaultValue={[featuredFaq[0].question]} keepMounted>
+        {featuredFaq.map(({ question, answer }) => (
+          <AccordionItem key={question} value={question}>
+            <AccordionTrigger>{question}</AccordionTrigger>
+            <AccordionContent>
               <Text text={answer} />
-            </FaqItem>
-          ))}
-        </div>
-        <div>
-          {right.map(({ question, answer }, i) => (
-            <FaqItem key={question} number={i + 8} question={question}>
-              <Text text={answer} />
-            </FaqItem>
-          ))}
-        </div>
-      </div>
+            </AccordionContent>
+          </AccordionItem>
+        ))}
+      </Accordion>
     </Section>
   );
 }

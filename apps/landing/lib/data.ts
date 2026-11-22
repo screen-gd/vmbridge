@@ -288,3 +288,20 @@ export const faq = [
     answer: `On macOS or Linux, run \`${install}\`. Then run \`vmbridge\`, choose a dashboard password and open \`/dashboard\` to add a provider and pair T3 Code.`,
   },
 ];
+
+/**
+ * The five questions shown on the home page, picked from `faq` by text so they
+ * cannot drift from the full list on /faq. Throws at module load if a question
+ * is renamed or dropped from `faq`.
+ */
+export const featuredFaq = [
+  "What is VM Bridge?",
+  "Which cloud providers does VM Bridge support?",
+  "How much does VM Bridge cost?",
+  "How do sleep and wake work?",
+  "Where are my data and keys stored?",
+].map((question) => {
+  const entry = faq.find((item) => item.question === question);
+  if (!entry) throw new Error(`featuredFaq: no faq entry for "${question}"`);
+  return entry;
+});

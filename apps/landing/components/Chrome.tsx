@@ -66,9 +66,10 @@ function FooterColumn({ label, links }: { label: string; links: { label: string;
 }
 
 /**
- * The site footer inside the page rails: brand, line and license beside the Site and
- * Project link columns, then the giant clipped wordmark. Ends 2rem above the viewport
- * bottom so the fixed status line never covers it.
+ * The site footer inside the page rails: one row with the brand block on the left,
+ * the large faint wordmark centred, and the Site and Project link columns on the
+ * right. Below xl the wordmark drops to its own centred line under the brand and
+ * links. Ends 2rem above the viewport bottom so the fixed status line never covers it.
  */
 export function Footer() {
   const siteLinks = [
@@ -77,7 +78,7 @@ export function Footer() {
     { label: copy.footer.links.providers, href: "/#providers" },
     { label: copy.footer.links.dashboard, href: "/#dashboard" },
     { label: copy.footer.links.commands, href: "/#cli" },
-    { label: copy.footer.links.faq, href: "/#faq" },
+    { label: copy.footer.links.faq, href: "/faq" },
   ];
   const projectLinks = [
     { label: copy.footer.links.docs, href: "/docs" },
@@ -88,24 +89,27 @@ export function Footer() {
   ];
   return (
     <footer className={`${railShell} border-t border-white/10 pb-8`}>
-      <div className={`flex flex-col gap-10 ${innerPad} py-12 sm:flex-row sm:items-start sm:justify-between`}>
-        <div>
-          <Link href="/" className="flex items-center gap-2.5 font-medium">
-            <Logo className="size-6" />
-            VM Bridge
-          </Link>
-          <p className="mt-3 max-w-xs text-sm text-muted-foreground">{copy.footer.line}</p>
-          <p className="mt-2 font-mono text-[13px] text-faint">
-            {copy.footer.license} · v{site.version}
-          </p>
+      <div className={`${innerPad} grid gap-10 py-12 xl:grid-cols-[1fr_auto_1fr] xl:items-center`}>
+        <div className="sm:flex sm:items-start sm:justify-between xl:contents">
+          <div>
+            <Link href="/" className="flex items-center gap-2.5 font-medium">
+              <Logo className="size-6" />
+              VM Bridge
+            </Link>
+            <p className="mt-3 max-w-xs text-sm text-muted-foreground">{copy.footer.line}</p>
+            <p className="mt-2 font-mono text-[13px] text-faint">
+              {copy.footer.license} · v{site.version}
+            </p>
+          </div>
+          <div className="mt-10 flex gap-16 sm:mt-0 sm:gap-20 xl:order-3 xl:justify-end">
+            <FooterColumn label={copy.footer.site} links={siteLinks} />
+            <FooterColumn label={copy.footer.project} links={projectLinks} />
+          </div>
         </div>
-        <div className="flex gap-16 sm:gap-20">
-          <FooterColumn label={copy.footer.site} links={siteLinks} />
-          <FooterColumn label={copy.footer.project} links={projectLinks} />
-        </div>
-      </div>
-      <div aria-hidden className={`overflow-hidden border-t border-white/10 ${innerPad}`}>
-        <div className="translate-y-[0.14em] text-center font-medium text-[clamp(4rem,12vw,11rem)] leading-none tracking-tight text-white/[0.06] select-none">
+        <div
+          aria-hidden
+          className="text-center font-medium text-[clamp(3rem,7vw,7.5rem)] leading-none tracking-tight whitespace-nowrap text-white/[0.06] select-none xl:order-2"
+        >
           VM Bridge
         </div>
       </div>

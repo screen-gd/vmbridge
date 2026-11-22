@@ -164,6 +164,8 @@ export const copy = {
   faq: {
     /** 40 */
     title: "Questions",
+    /** 30. The link under the home FAQ title to the full list; {n} is faq.length. */
+    all: "All {n} questions",
   },
 
   /** The fixed status line: the page's own sleep state, like a VM's. {n} is the countdown. */
