@@ -33,7 +33,9 @@ const sections: DocsSection[] = [
   { id: "skills", title: "Skills" },
   { id: "instructions", title: "AGENTS.md" },
   { id: "network", title: "Addresses and Tailscale" },
+  { id: "cloudflare", title: "Cloudflare Tunnel" },
   { id: "security", title: "Data and security" },
+  { id: "encryption", title: "Encryption" },
   { id: "troubleshooting", title: "Troubleshooting" },
   { id: "develop", title: "Develop" },
 ];
@@ -438,9 +440,62 @@ bun run build          # dist/vmbridge
                   ["Tailscale IP", <Code key="3">http://100.101.102.103:3774</Code>],
                   ["Tailscale name", <Code key="4">http://mac-mini.tail.ts.net:3774</Code>],
                   ["Tailscale HTTPS", <Code key="5">https://mac-mini.tail.ts.net</Code>],
+                  ["Cloudflare Tunnel", <Code key="6">https://bridge.example.com</Code>],
                 ]}
               />
               <p>Turn on Tailscale HTTPS under Settings to reach VM Bridge from anywhere on your tailnet with a certificate.</p>
+            </Section>
+
+            <Section id="cloudflare" title="Cloudflare Tunnel">
+              <p>
+                Cloudflare Tunnel gives VM Bridge an HTTPS address on the public internet, so you can reach it from anywhere without opening a port.
+                It runs through <Code>cloudflared</Code>, Cloudflare&apos;s free tool. Install it, and the switch shows up under{" "}
+                <strong>Settings</strong>, <strong>Addresses</strong>:
+              </p>
+              <Block>{`brew install cloudflared`}</Block>
+              <p>
+                The tunnel is off until you turn it on, because anyone on the internet can then reach your login page. Your dashboard password,
+                pairing links and the one-time setup link still protect everything behind it. Once it is on, its address appears with the others:
+                in Settings, in the links <Code>vmbridge run</Code> prints and in pairing links.
+              </p>
+              <Table
+                head={["Mode", "How to set it up", "Address"]}
+                rows={[
+                  ["Free address", "Leave the domain empty. No Cloudflare account needed.", "A random trycloudflare.com address that changes every time VM Bridge restarts"],
+                  [
+                    "Your own domain",
+                    <>
+                      Run <Code key="l">cloudflared tunnel login</Code> once, then type a hostname on a domain in your Cloudflare account.
+                    </>,
+                    "The hostname you typed",
+                  ],
+                  [
+                    "Dashboard tunnel",
+                    "Make a tunnel in the Cloudflare dashboard, paste its token and type the hostname you gave it there.",
+                    "The hostname you typed",
+                  ],
+                ]}
+              />
+              <List
+                items={[
+                  <>
+                    With your own domain, VM Bridge makes a tunnel named <Code>vmbridge-</Code> plus the first 8 characters of its ID, and adds the DNS
+                    record for your hostname. It never replaces a record you already have.
+                  </>,
+                  <>
+                    Its config and the tunnel&apos;s credentials live in <Code>~/.vmbridge/cloudflared</Code>. A dashboard tunnel&apos;s token is kept with
+                    your other secrets.
+                  </>,
+                  <>
+                    cloudflared connects to VM Bridge on a port of its own on this machine, picked the first time you turn the tunnel on and kept after
+                    that. Settings shows it: point a dashboard tunnel&apos;s hostname at <Code>http://localhost:</Code> plus that port. If another app
+                    takes the port, VM Bridge picks a new one, and you update the dashboard tunnel to match.
+                  </>,
+                  "Free addresses cannot stream live updates, so the dashboard refreshes every 5 seconds there. Your own domain and dashboard tunnels update live.",
+                  "VM Bridge only believes the visitor address and HTTPS details Cloudflare adds when they arrive on the tunnel's port from this machine. Failed logins are counted per visitor, so one person cannot lock everyone out.",
+                  "While it is on, the tunnel starts and stops with VM Bridge, including when you close its terminal. If cloudflared stops on its own, VM Bridge starts it again after a second, waiting longer after each failure, up to a minute. Its warnings and errors go to the VM Bridge log with tokens hidden.",
+                ]}
+              />
             </Section>
 
             <Section id="security" title="Data and security">
@@ -455,6 +510,45 @@ bun run build          # dist/vmbridge
                   "Requests to VMs refuse redirects, so a token can never be sent to another site.",
                 ]}
               />
+            </Section>
+
+            <Section id="encryption" title="Encryption">
+              <p>
+                VM Bridge encrypts everything sensitive it saves, by default, with AES-256-GCM and a key that only your install has.
+              </p>
+              <List
+                items={[
+                  <>
+                    <strong>Encrypted:</strong> provider keys, the GitHub token, environment variables for VMs, each VM&apos;s T3 token, installed
+                    skill files and agent sign-ins.
+                  </>,
+                  <>
+                    <strong>Not encrypted:</strong> chat history, queued messages, logs and settings. They stay in files only your user can read.
+                  </>,
+                ]}
+              />
+              <p>
+                On first start VM Bridge makes a random key and saves it in <Code>~/.vmbridge/encryption.key</Code>, readable only by your user. To
+                use your own key, set <Code>VMBRIDGE_ENCRYPTION_KEY</Code> to 32 random bytes in base64. It takes the place of the file.
+              </p>
+              <Command text="openssl rand -base64 32" />
+              <p>
+                The key file sits next to your data, so a copy of the whole folder holds both. Keeping the key outside the folder, in{" "}
+                <Code>VMBRIDGE_ENCRYPTION_KEY</Code>, is stronger.
+              </p>
+              <p>
+                <strong>Back up the key</strong> somewhere apart from your data, such as a password manager: the contents of{" "}
+                <Code>encryption.key</Code>, or the value you set. To restore it, put the file back or set the variable again.
+              </p>
+              <p>
+                VM Bridge will not start with the wrong key or without its key, so it never overwrites what you saved. If the key is lost, no one
+                can read those values again, you included: start with a new data folder and add your provider keys, agent sign-ins, environment
+                variables and GitHub token again.
+              </p>
+              <p>
+                Updating from a version without encryption encrypts your saved data on first start. After that, older versions can&apos;t read it,
+                so don&apos;t go back to one.
+              </p>
             </Section>
 
             <Section id="troubleshooting" title="Troubleshooting">

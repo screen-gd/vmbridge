@@ -3,7 +3,7 @@ import { parseAsStringLiteral, useQueryState } from "nuqs";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { toast } from "sonner";
 import { Add01Icon, CommandLineIcon, ComputerIcon, Delete02Icon, GitBranchIcon, GithubIcon, GlobalIcon, Key01Icon, UnfoldMoreIcon } from "@hugeicons/core-free-icons";
-import { machineNameMaxLength, vmSizes, type BridgeSettings, type NetworkInfo, type Overview, type ProviderId, type RepoRule, type VmSize } from "@vmbridge/contracts";
+import { machineNameMaxLength, vmSizes, type BridgeSettings, type CloudflareInfo, type NetworkInfo, type Overview, type ProviderId, type RepoRule, type VmSize } from "@vmbridge/contracts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -343,7 +343,91 @@ function Addresses() {
         </Section>
       )}
       {action.error && <FieldError>{action.error}</FieldError>}
+      {network && <CloudflareTunnel info={network.cloudflare} onChange={setNetwork} />}
     </>
+  );
+}
+
+const tunnelBadge: Record<CloudflareInfo["state"], string> = { off: "Off", starting: "Starting", running: "On", failed: "Not working" };
+
+function CloudflareTunnel({ info, onChange }: { info: CloudflareInfo; onChange: (network: NetworkInfo) => void }) {
+  const [hostname, setHostname] = useState(info.hostname ?? "");
+  const [token, setToken] = useState("");
+  const action = useAction();
+  const save = (body: { enabled?: boolean; hostname?: string; token?: string | null }) =>
+    void action.run(async () => {
+      onChange(await api<NetworkInfo>("/network/cloudflare", { body }));
+      setToken("");
+    });
+
+  if (!info.installed) {
+    return (
+      <Section title="Cloudflare Tunnel" actions={<Badge variant="secondary">Not installed</Badge>}>
+        <FieldDescription>
+          Install cloudflared for a public HTTPS address: <code className="font-mono text-foreground">brew install cloudflared</code>
+        </FieldDescription>
+      </Section>
+    );
+  }
+
+  const status = info.url ?? (info.state === "starting" ? "Starting..." : "Opens VM Bridge to the internet, behind your password.");
+  return (
+    <Section title="Cloudflare Tunnel" actions={<Badge variant="secondary">{info.enabled ? tunnelBadge[info.state] : "Off"}</Badge>}>
+      <Item variant="outline">
+        <ItemContent className="min-w-0">
+          <ItemTitle>
+            <label htmlFor="cloudflare-tunnel">Public HTTPS address</label>
+          </ItemTitle>
+          <ItemDescription className={cn(info.url && "truncate font-mono text-xs")}>{status}</ItemDescription>
+          {info.url && info.mode === "quick" && <ItemDescription>Changes every time VM Bridge restarts. Use your own domain to keep it.</ItemDescription>}
+        </ItemContent>
+        <ItemActions>
+          <Switch id="cloudflare-tunnel" checked={info.enabled} disabled={action.busy} onCheckedChange={(enabled) => save({ enabled })} />
+        </ItemActions>
+      </Item>
+      {info.enabled && info.error && <FieldError>{info.error}</FieldError>}
+      <form
+        className="flex flex-col gap-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          save({ hostname, ...(token.trim() ? { token } : {}) });
+        }}
+      >
+        <Field>
+          <FieldLabel htmlFor="cloudflare-hostname">Your own domain</FieldLabel>
+          <Input id="cloudflare-hostname" className="h-9" value={hostname} placeholder="bridge.example.com" onChange={(event) => setHostname(event.target.value)} />
+          <FieldDescription>
+            {info.loggedIn || info.hasToken
+              ? "Leave empty for a random trycloudflare.com address."
+              : "Leave empty for a random trycloudflare.com address. For your own domain, run cloudflared tunnel login on this machine, or paste a tunnel token."}
+          </FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="cloudflare-token">Tunnel token</FieldLabel>
+          <Input
+            id="cloudflare-token"
+            className="h-9"
+            type="password"
+            autoComplete="off"
+            value={token}
+            placeholder={info.hasToken ? "Saved, paste a new one to replace it" : "Optional"}
+            onChange={(event) => setToken(event.target.value)}
+          />
+          {info.hasToken && info.port && <FieldDescription>In Cloudflare, point the hostname at http://localhost:{info.port}</FieldDescription>}
+        </Field>
+        <div className="flex gap-2">
+          <Button type="submit" size="lg" className="px-4" disabled={action.busy || (hostname.trim() === (info.hostname ?? "") && !token.trim())}>
+            Save
+          </Button>
+          {info.hasToken && (
+            <Button type="button" variant="outline" size="lg" className="px-4" disabled={action.busy} onClick={() => save({ token: null })}>
+              Remove token
+            </Button>
+          )}
+        </div>
+        {action.error && <FieldError>{action.error}</FieldError>}
+      </form>
+    </Section>
   );
 }
 

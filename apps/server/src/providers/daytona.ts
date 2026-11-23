@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import { connectSandbox } from "@opencoredev/sandbox-sdk";
 import { daytona } from "@opencoredev/sandbox-sdk/daytona";
 import { notFound, sdkDriver } from "./sdk.ts";
@@ -47,7 +48,7 @@ export const daytonaProvider: ProviderDefinition = {
         const sandbox = await get(sandboxId);
         if (done(sandbox.state)) return;
         if (failed.has(sandbox.state)) throw new Error(`Daytona sandbox ${sandboxId} is ${sandbox.state}: ${sandbox.errorReason ?? "no reason given"}.`);
-        await Bun.sleep(250);
+        await sleep(250);
       }
       throw new Error(`Daytona sandbox ${sandboxId} did not settle within ${Math.round(timeoutMs / 1000)} seconds.`);
     }
@@ -102,7 +103,7 @@ export const daytonaProvider: ProviderDefinition = {
             const { state } = await api.request<{ state: string }>("GET", "/snapshots/{name}", { params: { name } });
             if (state === "active") return name;
             if (failed.has(state)) throw new Error(`Daytona could not save the snapshot: it is ${state}.`);
-            await Bun.sleep(2000);
+            await sleep(2000);
           }
           throw new Error("Daytona did not finish the snapshot within 15 minutes.");
         } catch (error) {

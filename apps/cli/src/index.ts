@@ -14,7 +14,8 @@ Usage:
   vmbridge service uninstall                        Remove the background service
   vmbridge password                                 Set a new dashboard password
 
-The password can also come from VMBRIDGE_PASSWORD. Data lives in ${dataDir()}.`;
+The password can also come from VMBRIDGE_PASSWORD. Data lives in ${dataDir()}.
+Saved secrets are encrypted with the key in ${join(dataDir(), "encryption.key")}, or VMBRIDGE_ENCRYPTION_KEY (base64) when set.`;
 
 const pidFile = () => join(dataDir(), "vmbridge.pid");
 
@@ -113,16 +114,26 @@ async function run(options: { host: string; port: number }) {
   mkdirSync(dataDir(), { recursive: true, mode: 0o700 });
   writeFileSync(pidFile(), String(process.pid));
 
+  await server.tunnelReady();
   const network = await server.network();
+  const { cloudflare } = network;
   // Whoever has the setup code can choose the password, so it only goes to a terminal, never to a service's log file.
   const setupCode = process.stdout.isTTY ? server.setupCode : null;
   const page = setupCode ? `/dashboard/onboarding#code=${setupCode}` : "/dashboard";
   console.log(`VM Bridge ${version} is running.\n`);
   for (const address of network.addresses) console.log(`  ${address.label.padEnd(20)} ${address.url}${page}`);
   if (network.tailscale.running && !network.tailscale.httpsUrl) console.log("\n  Turn on Tailscale HTTPS in the dashboard settings for an https:// address.");
+  if (cloudflare.installed && !cloudflare.enabled) console.log("\n  Cloudflare Tunnel is available: turn it on in Settings > Addresses.");
+  else if (cloudflare.state === "failed") console.log(`\n  Cloudflare Tunnel did not start: ${cloudflare.error}`);
+  else if (cloudflare.enabled && !cloudflare.url) console.log("\n  Cloudflare Tunnel is still starting. Its address shows in Settings > Addresses.");
+  else if (cloudflare.mode === "quick" && cloudflare.url) console.log("\n  The Cloudflare Tunnel address changes every time VM Bridge restarts.");
   if (setupCode) console.log("\nOpen a link to choose your password and finish setup. Press Ctrl+C to stop.");
   else if (server.setupCode) console.log("\nNo dashboard password yet. Set one with `vmbridge password`, or start `vmbridge run` in a terminal for a setup link.");
   else console.log("\nOpen the dashboard to set up providers and pair devices. Press Ctrl+C to stop.");
+  if (server.encryptionKey.created) {
+    console.log(`\nSaved provider keys, sign-ins and environment variables are encrypted with a new key in ${server.encryptionKey.location}.`);
+    console.log("Back it up. Without it, they have to be entered again.");
+  }
 
   let stopping = false;
   const stop = async () => {
@@ -134,6 +145,8 @@ async function run(options: { host: string; port: number }) {
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
+  // Closing the terminal window. Without this, VM Bridge would end without stopping cloudflared.
+  process.on("SIGHUP", stop);
 }
 
 async function stop() {

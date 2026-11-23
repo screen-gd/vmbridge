@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { openDatabase } from "../src/db.ts";
 import { skillDescription, Skills } from "../src/skills.ts";
 import { applyScript, instructionHash, skillHash, type InstructionsState, type SkillFile } from "../src/vm/skills.ts";
+import { testEncryption } from "./key.ts";
 
 const temps: string[] = [];
 afterEach(() => {
@@ -124,7 +125,7 @@ test("switching sync all says so even when no skill changes, so the dashboard re
   temps.push(root);
   mkdirSync(join(root, "alpha"));
   writeFileSync(join(root, "alpha", "SKILL.md"), "---\nname: alpha\n---\n");
-  const skills = new Skills(openDatabase(":memory:"), () => [root]);
+  const skills = new Skills(openDatabase(":memory:"), testEncryption, () => [root]);
   let changes = 0;
   skills.on("changed", () => changes++);
 

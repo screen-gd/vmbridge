@@ -13,6 +13,7 @@
     "typecheck": "tsc && tsc -p apps/web",
     "test": "bun test",
     "check": "bun run typecheck && bun test",
+    "test:workerd": "bun apps/server/dev/workerd/run.ts",
     "build": "bun scripts/build.ts"
   },
   "engines": {

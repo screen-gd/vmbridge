@@ -21,6 +21,7 @@
   "include": [
     "apps/server/src",
     "apps/server/test",
+    "apps/server/dev",
     "apps/cli/src",
     "packages/*/src",
     "scripts"

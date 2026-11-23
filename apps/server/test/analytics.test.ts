@@ -11,6 +11,7 @@ import { Store } from "../src/store.ts";
 import { Traffic } from "../src/traffic.ts";
 import { Usage } from "../src/usage.ts";
 import type { Backend } from "../src/vm/backend.ts";
+import { testEncryption } from "./key.ts";
 
 const minute = 60_000;
 const hour = 60 * minute;
@@ -36,7 +37,7 @@ describe("days", () => {
 
 function setup() {
   const db = openDatabase(":memory:");
-  const store = new Store(db);
+  const store = new Store(db, testEncryption);
   const awake = new Set<string>();
   const usage = new Usage(store, () => awake);
   const addVm = (id: string, provider: "boat" | "boxd" = "boat") => {
@@ -170,7 +171,7 @@ describe("report", () => {
 
 describe("turns from the shell", () => {
   test("each run is recorded once with its repository, agent and model", async () => {
-    const store = new Store(openDatabase(":memory:"));
+    const store = new Store(openDatabase(":memory:"), testEncryption);
     store.insertVm({ id: "vm1", provider: "boxd", name: "vm1", size: "medium", state: "ready", createdAt: 0 });
     store.insertProject({ id: "p1", url: "https://github.com/acme/app.git", branch: null, title: "app", createdAt: 0 });
     store.addProjectVm("p1", "vm1");

@@ -7,6 +7,7 @@ import { AgentAuth } from "./agent-auth/profiles.ts";
 import { Clients } from "./auth/clients.ts";
 import { DashboardAuth } from "./auth/dashboard.ts";
 import { openDatabase } from "./db.ts";
+import { localKey, openEncryption } from "./encryption.ts";
 import { Fleet } from "./fleet.ts";
 import { fetchGitHubAccount } from "./github.ts";
 import { Clones } from "./gateway/clones.ts";
@@ -19,6 +20,7 @@ import { Secrets, Settings } from "./settings.ts";
 import { Skills } from "./skills.ts";
 import { Store } from "./store.ts";
 import { Traffic } from "./traffic.ts";
+import { CloudflareTunnel } from "./tunnel.ts";
 import { Usage } from "./usage.ts";
 import { Stats } from "./vm/stats.ts";
 
@@ -51,12 +53,21 @@ export async function start(options: StartOptions = {}) {
   const dir = options.dir ?? dataDir();
   const db = openDatabase(databasePath(dir));
   const settings = new Settings(db);
-  const secrets = new Secrets(db);
-  const store = new Store(db);
+  const { encryption, key: encryptionKey } = openEncryption(db, (create) => localKey(dir, create));
+  const secrets = new Secrets(db, encryption);
+  const store = new Store(db, encryption);
   const traffic = new Traffic(db);
 
-  const agents = new AgentAuth(join(dir, "auths"), settings);
-  const skills = new Skills(db);
+  const agents = new AgentAuth(join(dir, "auths"), settings, encryption);
+  const skills = new Skills(db, encryption);
+  // Data saved before encryption existed. Each table moves in one transaction and each file by rename, so a start
+  // cut short finishes the rest next time.
+  const sealed = secrets.sealPlaintext() + store.sealPlaintext() + skills.sealPlaintext() + agents.sealPlaintext();
+  if (sealed > 0) {
+    // Rewrites the database so the replaced plain text is not left behind in free pages or the write-ahead log.
+    db.run("VACUUM");
+    db.run("PRAGMA wal_checkpoint(TRUNCATE)");
+  }
   const fleet = new Fleet(store, settings, secrets, traffic, agents, skills);
   skills.on("changed", () => {
     fleet.emit("changed");
@@ -77,29 +88,36 @@ export async function start(options: StartOptions = {}) {
   const rpc = new Rpc(hub, clones, branches, traffic, () => secrets.has("github.token"));
   const gateway = new T3Gateway(hub, rpc, clients);
   const auth = new DashboardAuth(db, settings);
-  const admin = new Admin({ version, startedAt: Date.now(), host, port, settings, secrets, store, fleet, hub, traffic, clients, auth, gateway, agents, stats, skills, usage });
+  // Defined before the server starts listening; its listener only opens once the tunnel is on.
+  let tunnel: CloudflareTunnel;
+  const admin = new Admin({ version, startedAt: Date.now(), host, port, settings, secrets, store, fleet, hub, traffic, clients, auth, gateway, agents, stats, skills, usage, tunnel: () => tunnel });
 
-  const server = Bun.serve<SocketData>({
-    hostname: host,
-    port,
-    maxRequestBodySize: 2 * 1024 * 1024,
-    // Long enough for the dashboard's event stream between heartbeats.
-    idleTimeout: 60,
-    development: process.env.VMBRIDGE_DEV === "1",
-    // The dashboard lives under /dashboard, a path T3 clients never request.
-    routes: {
-      "/dashboard": dashboard,
-      "/dashboard/onboarding": dashboard,
-      "/": new Response(null, { status: 302, headers: { location: "/dashboard" } }),
-    },
-    fetch(request, server) {
-      const path = new URL(request.url).pathname;
-      if (path.startsWith("/admin/api/")) return admin.fetch(request, server);
-      if (isT3Path(path)) return gateway.fetch(request, server);
-      return new Response("Not found", { status: 404 });
-    },
-    websocket: gateway.websocket,
-  });
+  /** `viaTunnel` marks the loopback listener only cloudflared forwards to, whose proxy headers can be trusted. */
+  const serve = (hostname: string, port: number, viaTunnel: boolean) =>
+    Bun.serve<SocketData>({
+      hostname,
+      port,
+      maxRequestBodySize: 2 * 1024 * 1024,
+      // Long enough for the dashboard's event stream between heartbeats.
+      idleTimeout: 60,
+      development: process.env.VMBRIDGE_DEV === "1",
+      // The dashboard lives under /dashboard, a path T3 clients never request.
+      routes: {
+        "/dashboard": dashboard,
+        "/dashboard/onboarding": dashboard,
+        "/": new Response(null, { status: 302, headers: { location: "/dashboard" } }),
+      },
+      fetch(request, server) {
+        const path = new URL(request.url).pathname;
+        if (path.startsWith("/admin/api/")) return admin.fetch(request, server, viaTunnel);
+        if (isT3Path(path)) return gateway.fetch(request, server);
+        return new Response("Not found", { status: 404 });
+      },
+      websocket: gateway.websocket,
+    });
+  const server = serve(host, port, false);
+  tunnel = new CloudflareTunnel({ settings, secrets, traffic, dir, listen: (tunnelPort) => serve("127.0.0.1", tunnelPort, true) });
+  void tunnel.apply();
 
   let sweeping = false;
   const sweep = setInterval(() => {
@@ -134,13 +152,18 @@ export async function start(options: StartOptions = {}) {
     host,
     /** Opens first password setup in the dashboard. Null when a password exists. Show it only to whoever started VM Bridge. */
     setupCode: auth.createSetupCode(),
-    network: () => networkInfo(host, server.port ?? port),
+    /** Where this install's encryption key lives, and whether this start made it. */
+    encryptionKey: { location: encryptionKey.location, created: encryptionKey.created },
+    network: () => networkInfo(host, server.port ?? port, tunnel.info()),
+    /** Waits a little for the Cloudflare Tunnel's address, so it can be printed with the others. */
+    tunnelReady: () => tunnel.ready(20_000),
     async stop() {
       clearInterval(sweep);
       clearInterval(codexSync);
       clearInterval(statsTimer);
       clearInterval(skillWatch);
       gateway.close();
+      await tunnel.stop();
       await server.stop(true);
       // Some providers have no idle timeout of their own: a VM left awake here would run until VM Bridge starts again.
       await hub.sleepIdle(15_000);

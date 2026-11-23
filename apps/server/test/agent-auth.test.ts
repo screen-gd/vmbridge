@@ -8,6 +8,7 @@ import { openDatabase } from "../src/db.ts";
 import { Settings } from "../src/settings.ts";
 import { prepareVm } from "../src/vm/runtime.ts";
 import { recordingBox } from "./vm-program.ts";
+import { testEncryption } from "./key.ts";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -29,7 +30,7 @@ function setup() {
   const dir = mkdtempSync(join(tmpdir(), "vmbridge-auths-"));
   const db = openDatabase(":memory:");
   const settings = new Settings(db);
-  return { dir, settings, auth: new AgentAuth(join(dir, "auths"), settings) };
+  return { dir, settings, auth: new AgentAuth(join(dir, "auths"), settings, testEncryption) };
 }
 
 const jwt = (claims: Record<string, unknown>) => `e30.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.sig`;
@@ -73,6 +74,7 @@ describe("agent sign-in profiles", () => {
     expect(statSync(join(dir, "auths")).mode & 0o777).toBe(0o700);
     expect(statSync(join(dir, "auths", "opencode-work")).mode & 0o777).toBe(0o700);
     expect(statSync(join(dir, "auths", "opencode-work", "profile.json")).mode & 0o777).toBe(0o600);
+    expect(readFileSync(join(dir, "auths", "opencode-work", "profile.json"), "utf8")).not.toContain("oc-secret");
     expect(await auth.vmSecrets()).toEqual({ opencodeApiKey: "oc-secret" });
   });
 
@@ -139,7 +141,9 @@ describe("Codex sign-in", () => {
     await signInCodex(auth, codexFile("acct-1", "refresh-1", 10 * day));
     const [profile] = auth.list();
     expect(profile).toMatchObject({ id: "codex-chatgpt-account", agent: "codex", method: "chatgpt", name: "ChatGPT account", detail: "acct-1@example.com", inUse: true });
-    const saved = JSON.parse(readFileSync(join(dir, "auths", profile!.id, "auth.json"), "utf8")) as CodexAuthFile;
+    const stored = readFileSync(join(dir, "auths", profile!.id, "auth.json"), "utf8");
+    expect(stored).not.toContain("refresh-1");
+    const saved = JSON.parse(testEncryption.open(stored, `auths/${profile!.id}/auth.json`)) as CodexAuthFile;
     expect(saved).toMatchObject({ auth_mode: "chatgpt", OPENAI_API_KEY: null, tokens: { refresh_token: "refresh-1", account_id: "acct-1" } });
   });
 

@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentAuthMethod, AgentKind, AgentProfile, ClaudeLogin, CodexLogin } from "@vmbridge/contracts";
+import { Encryption } from "../encryption.ts";
 import type { Settings } from "../settings.ts";
 import { ClaudeCodeRejected, exchangeSetupToken, parsePastedCode, startClaudeSignIn, type ClaudeSignIn } from "./claude.ts";
 import {
@@ -80,7 +81,8 @@ const anthropicHeaders = (token: string) => ({
 });
 
 /**
- * Agent sign-ins, one folder per profile under `<data dir>/auths`. Folders are 0700 and files 0600.
+ * Agent sign-ins, one folder per profile under `<data dir>/auths`. Folders are 0700 and files 0600, and every file is
+ * encrypted: VMs get the plain text, which exists on this machine only in memory.
  * Every VM gets the profile each agent uses, never sign-ins from the VM provider.
  */
 export class AgentAuth {
@@ -93,9 +95,31 @@ export class AgentAuth {
   constructor(
     private readonly dir: string,
     private readonly settings: Settings,
+    private readonly encryption: Encryption,
   ) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     chmodSync(dir, 0o700);
+  }
+
+  /** Encrypts sign-in files saved before they were encrypted. Returns how many. */
+  sealPlaintext(): number {
+    let sealed = 0;
+    for (const entry of readdirSync(this.dir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !profileId.test(entry.name)) continue;
+      // Left by a write cut short, from before files were encrypted. Never read.
+      for (const file of readdirSync(join(this.dir, entry.name))) {
+        if (file.endsWith(".tmp")) rmSync(join(this.dir, entry.name, file), { force: true });
+      }
+      for (const file of ["profile.json", "auth.json"]) {
+        const path = join(this.dir, entry.name, file);
+        if (!existsSync(path)) continue;
+        const text = readFileSync(path, "utf8");
+        if (Encryption.isSealed(text)) continue;
+        this.writeSecret(entry.name, file, text);
+        sealed++;
+      }
+    }
+    return sealed;
   }
 
   list(): AgentProfile[] {
@@ -294,8 +318,8 @@ export class AgentAuth {
     const id = this.settings.get("agentProfiles").codex;
     const profile = id ? this.find(id) : undefined;
     if (!profile) return undefined;
-    const path = join(this.dir, profile.id, "auth.json");
-    const file = existsSync(path) ? parseCodexAuth(readFileSync(path, "utf8")) : null;
+    const text = this.readSecret(profile.id, "auth.json");
+    const file = text === undefined ? null : parseCodexAuth(text);
     return file ? { profile, file } : undefined;
   }
 
@@ -304,8 +328,8 @@ export class AgentAuth {
     // Signing in to the same ChatGPT account again replaces that profile's tokens.
     const existing = this.stored().find((profile) => {
       if (profile.agent !== "codex") return false;
-      const path = join(this.dir, profile.id, "auth.json");
-      const saved = existsSync(path) ? parseCodexAuth(readFileSync(path, "utf8")) : null;
+      const text = this.readSecret(profile.id, "auth.json");
+      const saved = text === undefined ? null : parseCodexAuth(text);
       return saved !== null && codexAccount(saved).accountId === accountId;
     });
     // Never named after the email: names show unblurred in the dashboard and in folder names.
@@ -320,13 +344,13 @@ export class AgentAuth {
   }
 
   private writeCodex(id: string, file: CodexAuthFile) {
-    this.writeSecret(join(this.dir, id, "auth.json"), JSON.stringify(file, null, 2));
+    this.writeSecret(id, "auth.json", JSON.stringify(file, null, 2));
   }
 
   private save(profile: StoredProfile): AgentProfile {
     const folder = join(this.dir, profile.id);
     mkdirSync(folder, { recursive: true, mode: 0o700 });
-    this.writeSecret(join(folder, "profile.json"), JSON.stringify(profile, null, 2));
+    this.writeSecret(profile.id, "profile.json", JSON.stringify(profile, null, 2));
     // The first profile for an agent is the one VMs use.
     const inUse = this.settings.get("agentProfiles");
     if (!inUse[profile.agent]) this.settings.set("agentProfiles", { ...inUse, [profile.agent]: profile.id });
@@ -334,11 +358,17 @@ export class AgentAuth {
     return this.list().find((entry) => entry.id === profile.id)!;
   }
 
-  /** Writes through a temporary file, so a crash never leaves half a token on disk. */
-  private writeSecret(path: string, text: string) {
+  /** Encrypts, then writes through a temporary file, so a crash never leaves half a token on disk. */
+  private writeSecret(id: string, file: string, text: string) {
+    const path = join(this.dir, id, file);
     const temp = `${path}.${process.pid}.tmp`;
-    writeFileSync(temp, text, { mode: 0o600 });
+    writeFileSync(temp, this.encryption.seal(text, `auths/${id}/${file}`), { mode: 0o600 });
     renameSync(temp, path);
+  }
+
+  private readSecret(id: string, file: string): string | undefined {
+    const path = join(this.dir, id, file);
+    return existsSync(path) ? this.encryption.open(readFileSync(path, "utf8"), `auths/${id}/${file}`) : undefined;
   }
 
   private stored(): StoredProfile[] {
@@ -351,7 +381,8 @@ export class AgentAuth {
   private find(id: string): StoredProfile | undefined {
     if (!profileId.test(id)) return undefined;
     try {
-      return JSON.parse(readFileSync(join(this.dir, id, "profile.json"), "utf8")) as StoredProfile;
+      const text = this.readSecret(id, "profile.json");
+      return text === undefined ? undefined : (JSON.parse(text) as StoredProfile);
     } catch {
       return undefined;
     }

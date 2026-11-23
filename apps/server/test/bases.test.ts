@@ -10,6 +10,7 @@ import { Store } from "../src/store.ts";
 import type { Traffic } from "../src/traffic.ts";
 import { baseMaxAgeMs, baseSetupLimitMs, chooseBase } from "../src/vm/bases.ts";
 import { setupStamp } from "../src/vm/runtime.ts";
+import { testEncryption } from "./key.ts";
 
 const now = 1_000_000_000_000;
 
@@ -57,7 +58,7 @@ function setup() {
   settings.set("providers", ["boxd"]);
   settings.set("defaultProvider", "boxd");
   settings.set("t3Version", "1.0.0");
-  const store = new Store(db);
+  const store = new Store(db, testEncryption);
   const traffic = { record: () => {} } as unknown as Traffic;
   const agents = { vmSecrets: async () => ({}), adoptCodex: () => {} } as unknown as AgentAuth;
   const events: string[] = [];
@@ -77,7 +78,7 @@ function setup() {
     destroy: async (sandboxId: string) => void events.push(`destroy ${sandboxId}`),
     deleteCheckpoint: async (snapshot: string) => void events.push(`delete ${snapshot}`),
   };
-  const fleet = new Fleet(store, settings, new Secrets(db), traffic, agents, new Skills(db));
+  const fleet = new Fleet(store, settings, new Secrets(db, testEncryption), traffic, agents, new Skills(db, testEncryption));
   fleet.driver = () => driver as unknown as Driver;
   fleets.push(fleet);
   return { fleet, store, settings, driver, events };

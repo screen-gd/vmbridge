@@ -18,6 +18,7 @@ import { Store } from "../src/store.ts";
 import type { Traffic } from "../src/traffic.ts";
 import { T3Rejected } from "../src/vm/backend.ts";
 import { programFiles } from "./vm-program.ts";
+import { testEncryption } from "./key.ts";
 
 /** No resource readings: placement goes by thread counts and size labels alone. */
 const unmeasured = { get: () => null, lastDisk: () => null };
@@ -95,13 +96,13 @@ function setup(skillRoots?: string[]) {
   settings.set("providers", ["boxd"]);
   settings.set("defaultProvider", "boxd");
   settings.set("t3Version", "1.0.0");
-  const store = new Store(db);
-  const secrets = new Secrets(db);
+  const store = new Store(db, testEncryption);
+  const secrets = new Secrets(db, testEncryption);
   const recorded: Parameters<Traffic["record"]>[0][] = [];
   const traffic = { record: (event: Parameters<Traffic["record"]>[0]) => void recorded.push(event) } as unknown as Traffic;
   const signIns: AgentSecrets = {};
   const agents = { vmSecrets: async () => ({ ...signIns }), adoptCodex: () => {}, codexDue: () => false } as unknown as AgentAuth;
-  const skills = skillRoots ? new Skills(db, () => skillRoots) : new Skills(db);
+  const skills = skillRoots ? new Skills(db, testEncryption, () => skillRoots) : new Skills(db, testEncryption);
 
   /** The VM's files, and its T3 server: whether it runs and the env file it started with, as agents inherit it. */
   const files: Record<string, string> = {};

@@ -20,7 +20,7 @@ Website and docs: [vmbridge.ordinity.com](https://vmbridge.ordinity.com)
 - Agent skills from [skills.sh](https://skills.sh) or from this machine reach every VM, for Claude
   Code and Codex.
 - Your global `AGENTS.md` (and Claude Code's `CLAUDE.md`) on this machine can follow you to every VM.
-- Works over your local network and Tailscale.
+- Works over your local network, Tailscale and Cloudflare Tunnel.
 
 ## Install
 
@@ -92,6 +92,57 @@ The AGENTS.md tab on the same page lists each agent's global file found on this 
 same way as skills, and edits follow within a few seconds.
 Switching it off, or deleting it here, takes it off the VMs. VM Bridge only replaces or removes a
 file it wrote: if a VM already has its own, or the file was edited on the VM, it is left alone.
+
+## Encryption
+
+VM Bridge encrypts everything sensitive it saves, by default, with AES-256-GCM: provider keys, the
+GitHub token, environment variables for VMs, each VM's T3 token, installed skill files and agent
+sign-ins. Chat history, queued messages, logs and settings are not encrypted. They stay in files
+only your user can read.
+
+On first start VM Bridge makes a random key in `~/.vmbridge/encryption.key`, readable only by your
+user. Set `VMBRIDGE_ENCRYPTION_KEY` to 32 random bytes in base64 (`openssl rand -base64 32`) to use
+your own key instead. The key file sits next to your data, so keeping the key outside the folder, in
+that variable, is stronger.
+
+Back up the key somewhere apart from your data, such as a password manager. VM Bridge will not start
+with the wrong key or without its key, so it never overwrites what you saved. If the key is lost, no
+one can read those values again: start with a new data folder and add your provider keys, agent
+sign-ins, environment variables and GitHub token again.
+
+Updating from a version without encryption encrypts your saved data on first start. After that,
+older versions can't read it, so don't go back to one.
+
+## Cloudflare Tunnel
+
+Cloudflare Tunnel gives VM Bridge an HTTPS address on the public internet, without opening a port.
+Install Cloudflare's free `cloudflared` tool (`brew install cloudflared`) and a switch shows up under
+**Settings**, **Addresses**. It is off until you turn it on, because anyone on the internet can then
+reach your login page. Your dashboard password, pairing links and the one-time setup link still
+protect everything behind it. Its address then shows with the others: in Settings, in the links
+`vmbridge run` prints and in pairing links.
+
+- **Free address:** leave the domain empty. You get a random trycloudflare.com address, no account
+  needed, and it changes every time VM Bridge restarts.
+- **Your own domain:** run `cloudflared tunnel login` once, then type a hostname such as
+  `bridge.example.com` on a domain in your Cloudflare account. VM Bridge makes a tunnel named
+  `vmbridge-` plus the first 8 characters of its ID and adds the DNS record. It never replaces a
+  record you already have.
+- **Dashboard tunnel:** make a tunnel in the Cloudflare dashboard, paste its token and type the
+  hostname you gave it there. The token is kept with your other secrets.
+
+cloudflared connects to VM Bridge on a port of its own on this machine, picked the first time you
+turn the tunnel on and kept after that. Settings shows it: point a dashboard tunnel's hostname at
+`http://localhost:` plus that port. If another app takes the port, VM Bridge picks a new one, and you
+update the dashboard tunnel to match. The tunnel's config and credentials live in
+`~/.vmbridge/cloudflared`.
+
+- Free addresses cannot stream live updates, so the dashboard refreshes every 5 seconds there.
+- VM Bridge only believes the visitor address and HTTPS details Cloudflare adds when they arrive on
+  the tunnel's port from this machine, so failed logins are counted per visitor.
+- While it is on, the tunnel starts and stops with VM Bridge, including when you close its terminal.
+  If cloudflared stops on its own, VM Bridge starts it again after a second, waiting longer after
+  each failure, up to a minute. Its warnings and errors go to the VM Bridge log with tokens hidden.
 
 ## Commands
 

@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { ProviderId, VmSize, VmState } from "@vmbridge/contracts";
+import { Encryption } from "./encryption.ts";
 
 export interface VmRow {
   id: string;
@@ -122,14 +123,38 @@ export class Store {
   /** Projects are read on every routed frame for path rewriting, so they are kept in memory. */
   private projectCache: ProjectRow[] | null = null;
 
-  constructor(readonly db: Database) {}
+  constructor(
+    readonly db: Database,
+    private readonly encryption: Encryption,
+  ) {}
 
   vms(): VmRow[] {
-    return this.db.query<VmRow, []>(`SELECT ${vmColumns} FROM vms ORDER BY created_at`).all();
+    return this.db
+      .query<VmRow, []>(`SELECT ${vmColumns} FROM vms ORDER BY created_at`)
+      .all()
+      .map((vm) => this.openVm(vm));
   }
 
   vm(id: string): VmRow | null {
-    return this.db.query<VmRow, [string]>(`SELECT ${vmColumns} FROM vms WHERE id = ?`).get(id);
+    const vm = this.db.query<VmRow, [string]>(`SELECT ${vmColumns} FROM vms WHERE id = ?`).get(id);
+    return vm && this.openVm(vm);
+  }
+
+  /** The token for a VM's T3 server is stored encrypted. */
+  private openVm(vm: VmRow): VmRow {
+    return vm.t3Token ? { ...vm, t3Token: this.encryption.open(vm.t3Token, `vm:${vm.id}:t3Token`) } : vm;
+  }
+
+  /** Encrypts T3 tokens saved before they were encrypted. Returns how many. */
+  sealPlaintext(): number {
+    const rows = this.db
+      .query<{ id: string; t3Token: string }, []>("SELECT id, t3_token AS t3Token FROM vms WHERE t3_token IS NOT NULL AND t3_token != ''")
+      .all()
+      .filter((row) => !Encryption.isSealed(row.t3Token));
+    this.db.transaction(() => {
+      for (const row of rows) this.updateVm(row.id, { t3Token: row.t3Token });
+    })();
+    return rows.length;
   }
 
   insertVm(vm: Pick<VmRow, "id" | "provider" | "name" | "size" | "state" | "createdAt">) {
@@ -139,7 +164,7 @@ export class Store {
   }
 
   updateVm(id: string, update: VmUpdate) {
-    const { sql, values } = assignments(vmFields, update);
+    const { sql, values } = assignments(vmFields, update.t3Token ? { ...update, t3Token: this.encryption.seal(update.t3Token, `vm:${id}:t3Token`) } : update);
     if (sql) this.db.query(`UPDATE vms SET ${sql} WHERE id = ?`).run(...values, id);
   }
 

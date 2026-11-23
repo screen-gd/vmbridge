@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { machineNameMaxLength, type AgentKind, type GitHubAccount, type ProviderId, type RepoRule, type VmSize } from "@vmbridge/contracts";
+import { Encryption } from "./encryption.ts";
 import type { ServerConfig } from "./gateway/types.ts";
 
 export interface ProviderPreference {
@@ -41,6 +42,12 @@ interface SettingValues {
   syncLocalSkills: boolean;
   /** T3's config from the last VM removed, kept while no VM has one (see `Hub.forget`). */
   fallbackConfig: { vmId: string; config: ServerConfig } | null;
+  /**
+   * Cloudflare Tunnel. Off until the user turns it on, since it puts VM Bridge on the public internet. `port` is the
+   * loopback listener cloudflared forwards to, kept so a dashboard-made tunnel's hostname keeps pointing at it.
+   * A dashboard tunnel's token is the `cloudflare.tunnelToken` secret.
+   */
+  cloudflareTunnel: { enabled: boolean; hostname: string | null; port: number | null };
 }
 
 const defaultMachineName = "VM Bridge";
@@ -70,6 +77,7 @@ const defaults: { [K in keyof SettingValues]: () => SettingValues[K] } = {
   instructionSync: () => ({}),
   syncLocalSkills: () => false,
   fallbackConfig: () => null,
+  cloudflareTunnel: () => ({ enabled: false, hostname: null, port: null }),
 };
 
 export class Settings {
@@ -94,16 +102,20 @@ export class Settings {
   }
 }
 
-/** Secret values never leave the server through the admin API; only their presence does. */
+/** Secret values never leave the server through the admin API; only their presence does. Stored encrypted. */
 export class Secrets {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly encryption: Encryption,
+  ) {}
 
   get(name: string): string | undefined {
-    return this.db.query<{ value: string }, [string]>("SELECT value FROM secrets WHERE name = ?").get(name)?.value;
+    const value = this.db.query<{ value: string }, [string]>("SELECT value FROM secrets WHERE name = ?").get(name)?.value;
+    return value === undefined ? undefined : this.encryption.open(value, `secret:${name}`);
   }
 
   has(name: string): boolean {
-    return this.get(name) !== undefined;
+    return this.db.query("SELECT 1 FROM secrets WHERE name = ?").get(name) !== null;
   }
 
   set(name: string, value: string | null): void {
@@ -111,8 +123,18 @@ export class Secrets {
     else {
       this.db
         .query("INSERT INTO secrets (name, value) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value")
-        .run(name, value);
+        .run(name, this.encryption.seal(value, `secret:${name}`));
     }
+  }
+
+  /** Encrypts values saved before secrets were encrypted. Returns how many. */
+  sealPlaintext(): number {
+    const rows = this.db.query<{ name: string; value: string }, []>("SELECT name, value FROM secrets").all();
+    const plain = rows.filter((row) => !Encryption.isSealed(row.value));
+    this.db.transaction(() => {
+      for (const row of plain) this.set(row.name, row.value);
+    })();
+    return plain.length;
   }
 }
 

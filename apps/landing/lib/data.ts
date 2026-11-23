@@ -266,7 +266,7 @@ export const faq = [
   {
     question: "Does VM Bridge run on Windows?",
     answer:
-      "No. VM Bridge runs on macOS and Linux. T3 Code on your other devices connects to it over your local network or Tailscale.",
+      "No. VM Bridge runs on macOS and Linux. T3 Code on your other devices connects to it over your local network, Tailscale or Cloudflare Tunnel.",
   },
   {
     question: "What happens when I run many threads in one project?",

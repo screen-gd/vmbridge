@@ -42,7 +42,17 @@ export function useLive() {
 
   useEffect(() => {
     let cancelled = false;
-    void api<TrafficEvent[]>("/traffic").then((recent) => !cancelled && setTraffic(recent.slice(-trafficLimit)));
+    let streaming = false;
+    // Cloudflare's quick tunnels hold event streams back, so until the stream delivers, read the same data every few seconds.
+    const loadTraffic = (onlyWhileWaiting: boolean) =>
+      void api<TrafficEvent[]>("/traffic").then((recent) => !cancelled && !(onlyWhileWaiting && streaming) && setTraffic(recent.slice(-trafficLimit)), () => {});
+    const loadOverview = () => void api<Overview>("/overview").then((next) => !cancelled && !streaming && setOverview(next), () => {});
+    loadTraffic(false);
+    loadOverview();
+    const polling = setInterval(() => {
+      loadTraffic(true);
+      loadOverview();
+    }, 5_000);
     const source = new EventSource("/admin/api/events");
     source.onopen = () => setOnline(true);
     source.onerror = () => {
@@ -57,12 +67,15 @@ export function useLive() {
       );
     };
     source.onmessage = (event) => {
+      streaming = true;
+      clearInterval(polling);
       const live = JSON.parse(event.data as string) as LiveMessage;
       if (live.type === "overview") setOverview(live.overview);
       else setTraffic((current) => [...current.slice(-(trafficLimit - 1)), live.event]);
     };
     return () => {
       cancelled = true;
+      clearInterval(polling);
       source.close();
     };
   }, []);

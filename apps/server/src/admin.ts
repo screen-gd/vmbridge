@@ -28,6 +28,7 @@ import { envVars, machineName, saveEnvVars, type Secrets, type Settings } from "
 import { SkillError, type Skills } from "./skills.ts";
 import type { Store } from "./store.ts";
 import type { Traffic } from "./traffic.ts";
+import { normalizeHostname, requestOrigin, tunnelTokenSecret, type CloudflareTunnel } from "./tunnel.ts";
 import type { Usage } from "./usage.ts";
 import { envNameProblem, envValueProblem } from "./vm/runtime.ts";
 import type { Stats } from "./vm/stats.ts";
@@ -50,6 +51,7 @@ export interface AdminDeps {
   stats: Stats;
   skills: Skills;
   usage: Usage;
+  tunnel: () => CloudflareTunnel;
 }
 
 class BadRequest extends Error {}
@@ -86,7 +88,7 @@ function timeRange(request: Request) {
 export class Admin {
   constructor(private readonly deps: AdminDeps) {}
 
-  async fetch(request: Request, server: Server<unknown>): Promise<Response> {
+  async fetch(request: Request, server: Server<unknown>, viaTunnel = false): Promise<Response> {
     const path = new URL(request.url).pathname.slice("/admin/api".length);
     const { auth } = this.deps;
     // A JSON body forces a CORS preflight, which VM Bridge never answers, so other sites cannot post here.
@@ -97,8 +99,7 @@ export class Admin {
       if (path === "/auth" && request.method === "GET") {
         return json({ authenticated: auth.authenticated(request), hasPassword: auth.hasKey(), onboarded: this.deps.settings.get("onboarded") });
       }
-      const secure = new URL(request.url).protocol === "https:" || request.headers.get("x-forwarded-proto") === "https";
-      const address = server.requestIP(request)?.address ?? "unknown";
+      const { address, secure } = requestOrigin(request, server.requestIP(request)?.address, viaTunnel);
       if (path === "/login" && request.method === "POST") {
         const { key } = await body(request);
         const cookie = await auth.login(typeof key === "string" ? key : "", address, secure);
@@ -113,7 +114,7 @@ export class Admin {
         return loggedIn(cookie);
       }
       if (!auth.authenticated(request)) return json({ error: "Log in first." }, 401);
-      return await this.route(request, path, server);
+      return await this.route(request, path, address);
     } catch (error) {
       if (error instanceof TooManyAttempts) return json({ error: error.message }, 429);
       if (error instanceof BadRequest || error instanceof InvalidPassword || error instanceof InvalidSignIn || error instanceof GitHubRejected || error instanceof SkillError) return json({ error: error.message }, 400);
@@ -121,7 +122,7 @@ export class Admin {
     }
   }
 
-  private async route(request: Request, path: string, server: Server<unknown>): Promise<Response> {
+  private async route(request: Request, path: string, address: string): Promise<Response> {
     const { settings, secrets, store, fleet, hub, clients, auth, gateway, agents, skills } = this.deps;
     const method = request.method;
     const [, section, id, action] = path.split("/");
@@ -134,7 +135,6 @@ export class Admin {
       const current = typeof input.current === "string" ? input.current : "";
       const next = text(input.key, "The password");
       // Not 401: the session is still fine, and the dashboard treats 401 as logged out.
-      const address = server.requestIP(request)?.address ?? "unknown";
       if (!(await auth.changeKey(current, next, address))) return json({ error: "The current password is not right." }, 403);
       return json({ ok: true });
     }
@@ -168,12 +168,37 @@ export class Admin {
       }
     }
 
-    if (path === "/network" && method === "GET") return json(await networkInfo(this.deps.host, this.deps.port));
+    if (path === "/network" && method === "GET") return json(await this.network());
     if (path === "/network/https" && method === "POST") {
       const { enabled } = await body(request);
       if (enabled === true) await enableTailscaleHttps(this.deps.port);
       else await disableTailscaleHttps(this.deps.port);
-      return json(await networkInfo(this.deps.host, this.deps.port));
+      return json(await this.network());
+    }
+    if (path === "/network/cloudflare" && method === "POST") {
+      const input = await body(request);
+      const current = settings.get("cloudflareTunnel");
+      const next = { ...current };
+      if (input.enabled !== undefined) {
+        if (typeof input.enabled !== "boolean") throw new BadRequest("Say whether to turn the tunnel on.");
+        next.enabled = input.enabled;
+      }
+      if (input.hostname !== undefined) {
+        const hostname = input.hostname === null ? "" : text(input.hostname, "The hostname");
+        next.hostname = hostname ? normalizeHostname(hostname) : null;
+        if (hostname && !next.hostname) throw new BadRequest("Use a hostname such as bridge.example.com.");
+      }
+      // Like provider secrets: empty leaves the token as it is, null removes it.
+      if (input.token === null) secrets.set(tunnelTokenSecret, null);
+      else if (input.token !== undefined) {
+        const token = text(input.token, "The token");
+        if (token) secrets.set(tunnelTokenSecret, token);
+      }
+      settings.set("cloudflareTunnel", next);
+      const tunnel = this.deps.tunnel();
+      await tunnel.apply();
+      await tunnel.ready(30_000);
+      return json(await this.network());
     }
 
     if (section === "providers") {
@@ -405,7 +430,7 @@ export class Admin {
         } catch (error) {
           throw new BadRequest(message(error));
         }
-        const network = await networkInfo(this.deps.host, this.deps.port);
+        const network = await this.network();
         const urls = network.addresses.map((address) => {
           const url = `${address.url}/pair#token=${link.token}`;
           return { kind: address.kind, label: address.label, url };
@@ -607,6 +632,10 @@ export class Admin {
   }
 
   /** Server-sent events: every traffic event, and a fresh overview whenever the fleet changes. */
+  private network() {
+    return networkInfo(this.deps.host, this.deps.port, this.deps.tunnel().info());
+  }
+
   private events(request: Request) {
     const { traffic, fleet, hub, auth } = this.deps;
     const encoder = new TextEncoder();

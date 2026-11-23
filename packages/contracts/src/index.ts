@@ -75,12 +75,34 @@ export interface SelectOption {
   detail?: string;
 }
 
-export type AddressKind = "local" | "lan" | "tailscale" | "tailscale-dns" | "tailscale-https";
+export type AddressKind = "local" | "lan" | "tailscale" | "tailscale-dns" | "tailscale-https" | "cloudflare";
 
 export interface Address {
   kind: AddressKind;
   label: string;
   url: string;
+}
+
+/**
+ * quick: a random trycloudflare.com address that changes on every start. named: the user's hostname on a tunnel
+ * VM Bridge creates with their logged-in cloudflared. token: a tunnel made in the Cloudflare dashboard.
+ */
+export type TunnelMode = "quick" | "named" | "token";
+
+export interface CloudflareInfo {
+  installed: boolean;
+  /** cloudflared on this machine is logged in to a Cloudflare account, so VM Bridge can make a named tunnel. */
+  loggedIn: boolean;
+  enabled: boolean;
+  hostname: string | null;
+  hasToken: boolean;
+  mode: TunnelMode;
+  state: "off" | "starting" | "running" | "failed";
+  /** The public address once the tunnel is running. */
+  url: string | null;
+  error: string | null;
+  /** The loopback port cloudflared forwards to. A token tunnel's hostname must point at it. */
+  port: number | null;
 }
 
 export interface NetworkInfo {
@@ -93,6 +115,7 @@ export interface NetworkInfo {
     dnsName: string | null;
     httpsUrl: string | null;
   };
+  cloudflare: CloudflareInfo;
 }
 
 export interface PairingLink {

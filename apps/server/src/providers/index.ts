@@ -1,4 +1,5 @@
 import { Boxd, NotFoundError } from "@boxd-sh/sdk";
+import { Boxd as BoxdWeb } from "@boxd-sh/sdk/web";
 import { SandboxError } from "@opencoredev/sandbox-sdk";
 import { boxd } from "@opencoredev/sandbox-sdk/boxd";
 import { freestyle } from "@opencoredev/sandbox-sdk/freestyle";
@@ -8,6 +9,7 @@ import { superserve } from "@opencoredev/sandbox-sdk/superserve";
 import type { ProviderId } from "@vmbridge/contracts";
 import { Sandbox } from "railway";
 import { boatProvider } from "./boat.ts";
+import { boxdWeb, useBoxdWeb } from "./boxd-web.ts";
 import { daytonaProvider } from "./daytona.ts";
 import { e2bProvider } from "./e2b.ts";
 import { notFound, retryNotFound, sdkDriver } from "./sdk.ts";
@@ -25,6 +27,45 @@ async function ignoreNotFound(request: Promise<unknown>) {
   }
 }
 
+// boxd suspends on its own after this long without traffic, in case VM Bridge is down.
+const boxdIdleTimeoutMs = minutes(60);
+
+/** boxd over grpc-js, through the SDK's boxd adapter. The default on Bun. */
+function boxdGrpcDriver(apiKey: string) {
+  const provider = boxd({ apiKey });
+  return sdkDriver({
+    id: "boxd",
+    provider,
+    sleep: "pause",
+    create: { idleTimeoutMs: boxdIdleTimeoutMs },
+    // Listing would otherwise skip sleeping machines, and reading their labels wakes them.
+    listSleeping: async () => (await provider.listSleeping()).map(({ id, state }) => ({ id, state })),
+    // The SDK has no snapshot delete for boxd, so this uses boxd's own client.
+    async deleteCheckpoint(name) {
+      const client = new Boxd({ apiKey });
+      try {
+        await client.snapshots.delete(name);
+      } catch (error) {
+        if (!(error instanceof NotFoundError)) throw error;
+      } finally {
+        await client.close();
+      }
+    },
+  });
+}
+
+/** boxd over gRPC-web, for Workers. Its provider deletes snapshots itself. */
+function boxdWebDriver(apiKey: string) {
+  const provider = boxdWeb(new BoxdWeb({ apiKey, timeout: 30_000, maxRetries: 0 }), { apiKey });
+  return sdkDriver({
+    id: "boxd",
+    provider,
+    sleep: "pause",
+    create: { idleTimeoutMs: boxdIdleTimeoutMs },
+    listSleeping: provider.listSleeping,
+  });
+}
+
 const boxdProvider: ProviderDefinition = {
   id: "boxd",
   label: "boxd",
@@ -39,27 +80,7 @@ const boxdProvider: ProviderDefinition = {
   defaultSize: "medium",
   open(config) {
     const apiKey = required(config, "apiKey", "boxd API key");
-    const provider = boxd({ apiKey });
-    const driver = sdkDriver({
-      id: "boxd",
-      provider,
-      sleep: "pause",
-      // boxd suspends on its own after this long without traffic, in case VM Bridge is down.
-      create: { idleTimeoutMs: minutes(60) },
-      // Listing would otherwise skip sleeping machines, and reading their labels wakes them.
-      listSleeping: async () => (await provider.listSleeping()).map(({ id, state }) => ({ id, state })),
-      // The SDK has no snapshot delete for boxd, so this uses boxd's own client.
-      async deleteCheckpoint(name) {
-        const client = new Boxd({ apiKey });
-        try {
-          await client.snapshots.delete(name);
-        } catch (error) {
-          if (!(error instanceof NotFoundError)) throw error;
-        } finally {
-          await client.close();
-        }
-      },
-    });
+    const driver = useBoxdWeb() ? boxdWebDriver(apiKey) : boxdGrpcDriver(apiKey);
     return { ...driver, create: (input, from) => retryNotFound(() => driver.create(input, from)) };
   },
 };
@@ -152,8 +173,10 @@ const railwayProvider: ProviderDefinition = {
       sleep: "checkpoint",
       // Railway keeps checkpoints until deleted, and deletes them by ID, not by the key the SDK returns.
       async deleteCheckpoint(key) {
-        const checkpoint = (await Sandbox.checkpoints(auth)).find((entry) => entry.key === key);
-        if (checkpoint) await Sandbox.deleteCheckpoint(checkpoint.id, auth);
+        // Railway would call the global fetch as a method of its config, which Workers refuses.
+        const options = { ...auth, fetch: fetch.bind(globalThis) };
+        const checkpoint = (await Sandbox.checkpoints(options)).find((entry) => entry.key === key);
+        if (checkpoint) await Sandbox.deleteCheckpoint(checkpoint.id, options);
       },
     });
   },

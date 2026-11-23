@@ -12,6 +12,7 @@ import type { Wire } from "../src/gateway/types.ts";
 import type { VmLoad } from "../src/placement.ts";
 import { Store, type ProjectRow, type VmRow } from "../src/store.ts";
 import type { Backend } from "../src/vm/backend.ts";
+import { testEncryption } from "./key.ts";
 
 /** No resource readings: placement goes by thread counts and size labels alone. */
 const unmeasured = { get: () => null, lastDisk: () => null };
@@ -57,7 +58,7 @@ describe("path translation", () => {
 
 describe("routing a project on two VMs", () => {
   function setup() {
-    const store = new Store(openDatabase(":memory:"));
+    const store = new Store(openDatabase(":memory:"), testEncryption);
     for (const id of ["vm1", "vm2", "vm3"]) store.insertVm({ id, provider: "boxd", name: id, size: "medium", state: "ready", createdAt: 0 });
     store.insertProject({ id: "p1", url: "https://github.com/acme/app.git", branch: null, title: "app", createdAt: 0 });
     store.addProjectVm("p1", "vm1");
@@ -173,7 +174,7 @@ describe("machine name", () => {
 
   test("is the label T3 gets, and reaches clients already watching the config", async () => {
     const traffic = { record: () => {} } as unknown as Traffic;
-    const store = new Store(openDatabase(":memory:"));
+    const store = new Store(openDatabase(":memory:"), testEncryption);
     const settings = new Settings(store.db);
     store.insertVm({ id: "vm1", provider: "boxd", name: "vm1", size: "medium", state: "ready", createdAt: 0 });
     store.saveSnapshot("vm1", "config", { environment: { orchestrationProtocolVersion: 2 }, providers: [] });
@@ -204,7 +205,7 @@ describe("rpc", () => {
 
   test("a config stream that cannot start leaves no listener, and one that fails later ends without failing the emitter", async () => {
     const traffic = { record: () => {} } as unknown as Traffic;
-    const store = new Store(openDatabase(":memory:"));
+    const store = new Store(openDatabase(":memory:"), testEncryption);
     const fleet = Object.assign(new EventEmitter(), { backend: () => undefined, any: async () => "vm1" }) as unknown as Fleet;
     const hub = new Hub(store, new Settings(store.db), fleet, traffic, unmeasured);
     const rpc = new Rpc(hub, {} as never, {} as never, traffic, () => false);
@@ -237,7 +238,7 @@ describe("rpc", () => {
 
   test("removing the last VM while a client watches the config, as with a queued turn on it, starts no VM", async () => {
     const traffic = { record: () => {} } as unknown as Traffic;
-    const store = new Store(openDatabase(":memory:"));
+    const store = new Store(openDatabase(":memory:"), testEncryption);
     const settings = new Settings(store.db);
     settings.set("defaultProvider", "boxd");
     let started = 0;
@@ -281,7 +282,7 @@ describe("rpc", () => {
 
   test("two retries of one launch racing through placement launch the same thread", async () => {
     const traffic = { record: () => {} } as unknown as Traffic;
-    const store = new Store(openDatabase(":memory:"));
+    const store = new Store(openDatabase(":memory:"), testEncryption);
     store.insertVm({ id: "vm1", provider: "boxd", name: "vm1", size: "medium", state: "ready", createdAt: 0 });
     store.insertProject({ id: "p1", url: "https://github.com/acme/app.git", branch: null, title: "app", createdAt: 0 });
     const placeThread = async (_projectId: string, options: { placed: (vmId: string) => void }) => {
@@ -301,7 +302,7 @@ describe("rpc", () => {
 
   test("a project's branch list adds the branches only its other VMs have, and a launch from one goes to a VM that has it", async () => {
     const traffic = { record: () => {} } as unknown as Traffic;
-    const store = new Store(openDatabase(":memory:"));
+    const store = new Store(openDatabase(":memory:"), testEncryption);
     for (const id of ["vm1", "vm2"]) store.insertVm({ id, provider: "boxd", name: id, size: "medium", state: "ready", createdAt: 0 });
     store.updateVm("vm2", { state: "sleeping" });
     store.insertProject({ id: "p1", url: "https://github.com/acme/app.git", branch: null, title: "app", createdAt: 0 });
@@ -361,7 +362,7 @@ describe("rpc", () => {
   for (const threadId of [undefined, "t-explicit"]) {
     test(`a retry that placement sent to another VM follows the VM and thread that won, and gives back its own reservation (${threadId ? "client" : "minted"} thread ID)`, async () => {
       const traffic = { record: () => {} } as unknown as Traffic;
-      const store = new Store(openDatabase(":memory:"));
+      const store = new Store(openDatabase(":memory:"), testEncryption);
       for (const id of ["vm1", "vm2"]) store.insertVm({ id, provider: "boxd", name: id, size: "medium", state: "ready", createdAt: 0 });
       store.insertProject({ id: "p1", url: "https://github.com/acme/app.git", branch: null, title: "app", createdAt: 0 });
       store.addProjectVm("p1", "vm1");
@@ -414,7 +415,7 @@ describe("child threads a VM starts itself", () => {
 
   /** A project on two VMs, primary vm1, with the parent thread running on vm2 as vm2's shell reports it. */
   async function setup() {
-    const store = new Store(openDatabase(":memory:"));
+    const store = new Store(openDatabase(":memory:"), testEncryption);
     for (const id of ["vm1", "vm2"]) store.insertVm({ id, provider: "boxd", name: id, size: "medium", state: "ready", createdAt: 0 });
     store.insertProject({ id: "p1", url: "https://github.com/acme/app.git", branch: null, title: "app", createdAt: 0 });
     for (const id of ["vm1", "vm2"]) {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import { parseAsString, parseAsStringLiteral, useQueryStates } from "nuqs";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { Analytics01Icon, Coins01Icon, File01Icon, FlowConnectionIcon, LaptopIcon, Logout01Icon, MagicWand01Icon, Plug01Icon, Settings01Icon } from "@hugeicons/core-free-icons";
@@ -51,10 +52,11 @@ const onboardingPath = "/dashboard/onboarding";
 
 export function App() {
   const [auth, setAuth] = useState<AuthState | null>(null);
-  const refresh = () => void api<AuthState>("/auth").then(setAuth);
+  // Committed synchronously, so a view transition around it (finishing onboarding) captures the new screen.
+  const refresh = () => api<AuthState>("/auth").then((next) => flushSync(() => setAuth(next)));
   useEffect(() => {
-    refresh();
-    return onLoggedOut(refresh);
+    void refresh();
+    return onLoggedOut(() => void refresh());
   }, []);
 
   // A fresh bridge, or a logged in one that never finished onboarding, goes there. Once finished, onboarding goes to the dashboard.
@@ -68,8 +70,8 @@ export function App() {
   return (
     <TooltipProvider delayDuration={300}>
       {auth && screen === "onboarding" && <Onboarding hasPassword={auth.hasPassword} onChanged={refresh} />}
-      {screen === "dashboard" && <Dashboard onLoggedOut={refresh} />}
-      {screen === "login" && <Login onLoggedIn={refresh} />}
+      {screen === "dashboard" && <Dashboard onLoggedOut={() => void refresh()} />}
+      {screen === "login" && <Login onLoggedIn={() => void refresh()} />}
       <Toaster position="bottom-right" />
     </TooltipProvider>
   );
@@ -103,7 +105,7 @@ function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
           <Button type="submit" size="lg" className="h-10" disabled={action.busy || !key}>
             Log in
           </Button>
-          {unencrypted && <p className="text-center text-sm text-muted-foreground">This connection is not encrypted. Turn on Tailscale HTTPS in Settings.</p>}
+          {unencrypted && <p className="text-center text-sm text-muted-foreground">This connection is not encrypted. For HTTPS, turn on Tailscale HTTPS or Cloudflare Tunnel in Settings.</p>}
         </FieldGroup>
       </form>
     </main>
@@ -139,7 +141,7 @@ function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
           onLogOut={() => void api("/logout", { body: {} }).finally(onLoggedOut)}
         />
 
-        <main className="relative mx-2 min-h-0 flex-1 overflow-hidden rounded-xl border bg-background sm:mr-3 sm:mb-3 sm:ml-0">
+        <main className="relative mx-2 min-h-0 flex-1 overflow-hidden rounded-xl border bg-background [view-transition-name:panel] sm:mr-3 sm:mb-3 sm:ml-0">
           {overview && view === "canvas" && <Canvas overview={overview} traffic={traffic} onPair={() => go("devices")} />}
           {overview && view === "logs" && <Logs overview={overview} traffic={traffic} />}
           {overview && view === "costs" && <Costs overview={overview} />}

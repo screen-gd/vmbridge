@@ -1,0 +1,7 @@
+// Local workerd harness for the provider drivers. Not deployed. Run it with `bun run test:workerd`.
+{
+  "name": "vmbridge-providers-workerd",
+  "main": "worker.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+}

@@ -8,6 +8,7 @@ import { busyNotice, choose, type VmLoad } from "../src/placement.ts";
 import { Secrets, Settings } from "../src/settings.ts";
 import { Store } from "../src/store.ts";
 import type { Traffic } from "../src/traffic.ts";
+import { testEncryption } from "./key.ts";
 
 function setup() {
   const db = openDatabase(":memory:");
@@ -15,7 +16,7 @@ function setup() {
   settings.set("providers", ["boxd", "railway"]);
   settings.set("defaultProvider", "boxd");
   settings.set("vmSize", "medium");
-  const fleet = new Fleet(new Store(db), settings, new Secrets(db), { record: () => {} } as unknown as Traffic, {} as never, {} as never);
+  const fleet = new Fleet(new Store(db, testEncryption), settings, new Secrets(db, testEncryption), { record: () => {} } as unknown as Traffic, {} as never, {} as never);
   return { settings, fleet };
 }
 
@@ -95,7 +96,7 @@ describe("upgrading a database from one VM per project", () => {
       old.run("INSERT INTO projects (id, url, title, created_at) VALUES ('p2', 'https://github.com/acme/web.git', 'web', 1)");
       old.close();
 
-      const store = new Store(openDatabase(path));
+      const store = new Store(openDatabase(path), testEncryption);
       expect(store.project("p1")?.vms).toEqual([{ vmId: "vm1", checkoutPath: "/workspace/app" }]);
       expect(store.project("p2")?.vms).toEqual([]);
       store.db.close();

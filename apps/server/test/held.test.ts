@@ -9,12 +9,13 @@ import { Settings } from "../src/settings.ts";
 import { Store } from "../src/store.ts";
 import type { Traffic } from "../src/traffic.ts";
 import { T3Rejected, type Backend } from "../src/vm/backend.ts";
+import { testEncryption } from "./key.ts";
 
 /** No resource readings: placement goes by thread counts and size labels alone. */
 const unmeasured = { get: () => null, lastDisk: () => null };
 
 function setup() {
-  const store = new Store(openDatabase(":memory:"));
+  const store = new Store(openDatabase(":memory:"), testEncryption);
   store.insertVm({ id: "vm1", provider: "boxd", name: "vm1", size: "medium", state: "sleeping", createdAt: 0 });
   const thread = { id: "t1", title: "Fix login", settledOverride: null, settledAt: null, unsettledAt: null, archivedAt: null, pinnedAt: null, updatedAt: "2026-11-21T00:00:00.000Z" };
   store.saveSnapshot("vm1", "shell", { threads: [thread], archivedThreads: [], projects: [] } satisfies Shell);

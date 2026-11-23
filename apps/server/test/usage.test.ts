@@ -4,13 +4,14 @@ import { openDatabase } from "../src/db.ts";
 import { estimate, eurUsd, machine, pricing } from "../src/pricing.ts";
 import { Store } from "../src/store.ts";
 import { Usage } from "../src/usage.ts";
+import { testEncryption } from "./key.ts";
 
 const minute = 60_000;
 const hour = 60 * minute;
 
 function setup() {
   const db = openDatabase(":memory:");
-  const store = new Store(db);
+  const store = new Store(db, testEncryption);
   const awake = new Set<string>();
   const usage = new Usage(store, () => awake);
   const addVm = (id: string, provider: "boat" | "boxd" | "railway" = "boat") =>

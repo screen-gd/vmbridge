@@ -371,11 +371,13 @@ function Agents({ profiles }: { profiles: AgentProfile[] }) {
   return agentKinds.map((agent) => <AgentSection key={agent} agent={agent} profiles={profiles.filter((profile) => profile.agent === agent)} />);
 }
 
-export function AgentSection({ agent, profiles }: { agent: AgentKind; profiles: AgentProfile[] }) {
+/** `collapsed` keeps the sign-in form closed until asked for, for onboarding where signing in is optional. */
+export function AgentSection({ agent, profiles, collapsed }: { agent: AgentKind; profiles: AgentProfile[]; collapsed?: boolean }) {
   const [adding, setAdding] = useState(false);
   const action = useAction();
-  const open = adding || profiles.length === 0;
+  const open = adding || (!collapsed && profiles.length === 0);
   const done = () => setAdding(false);
+  const cancel = collapsed || profiles.length ? done : undefined;
   return (
     <Section
       title={agentNames[agent]}
@@ -383,7 +385,7 @@ export function AgentSection({ agent, profiles }: { agent: AgentKind; profiles: 
       actions={
         !open && (
           <Button variant="outline" size="lg" className="h-9" onClick={() => setAdding(true)}>
-            Add sign-in
+            {profiles.length ? "Add sign-in" : "Sign in"}
           </Button>
         )
       }
@@ -426,9 +428,13 @@ export function AgentSection({ agent, profiles }: { agent: AgentKind; profiles: 
         </Item>
       ))}
       {action.error && <FieldError>{action.error}</FieldError>}
-      {open && agent === "codex" && <CodexForm onDone={done} onCancel={profiles.length ? done : undefined} />}
-      {open && agent === "claude" && <ClaudeForm onDone={done} onCancel={profiles.length ? done : undefined} />}
-      {open && agent === "opencode" && <OpenCodeForm onDone={done} onCancel={profiles.length ? done : undefined} />}
+      {open && (
+        <div className="animate-in duration-300 fade-in slide-in-from-top-1 motion-reduce:animate-none">
+          {agent === "codex" && <CodexForm onDone={done} onCancel={cancel} />}
+          {agent === "claude" && <ClaudeForm onDone={done} onCancel={cancel} />}
+          {agent === "opencode" && <OpenCodeForm onDone={done} onCancel={cancel} />}
+        </div>
+      )}
     </Section>
   );
 }

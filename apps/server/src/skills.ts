@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import { homedir } from "node:os";
 import { basename, join, relative, sep } from "node:path";
 import type { LocalSkill, SkillInfo, SkillSearchResult, SkillSource } from "@vmbridge/contracts";
+import { Encryption } from "./encryption.ts";
 import { Instructions } from "./instructions.ts";
 import { Settings } from "./settings.ts";
 import { skillHash, skillsFingerprint, type SkillFile, type SkillsState } from "./vm/skills.ts";
@@ -106,6 +107,8 @@ export class Skills extends EventEmitter<{ changed: [] }> {
 
   constructor(
     private readonly db: Database,
+    /** Skill files are stored encrypted: local skills can hold anything their folder does. */
+    private readonly encryption: Encryption,
     /** The folders to find this machine's skills in. */
     private readonly roots = localRoots,
   ) {
@@ -153,7 +156,21 @@ export class Skills extends EventEmitter<{ changed: [] }> {
   files(name: string): SkillFile[] {
     const row = this.row(name);
     if (!row) throw new Error(`The skill ${name} is no longer installed.`);
-    return JSON.parse(row.files) as SkillFile[];
+    return JSON.parse(this.encryption.open(row.files, `skill:${name}`)) as SkillFile[];
+  }
+
+  /** Encrypts skill files saved before they were encrypted. Returns how many skills. */
+  sealPlaintext(): number {
+    const rows = this.db
+      .query<{ name: string; files: string }, []>("SELECT name, files FROM skills")
+      .all()
+      .filter((row) => !Encryption.isSealed(row.files));
+    this.db.transaction(() => {
+      for (const row of rows) {
+        this.db.query("UPDATE skills SET files = ? WHERE name = ?").run(this.encryption.seal(row.files, `skill:${row.name}`), row.name);
+      }
+    })();
+    return rows.length;
   }
 
   private save(name: string, source: SkillSource, ref: string, files: SkillFile[]) {
@@ -167,7 +184,7 @@ export class Skills extends EventEmitter<{ changed: [] }> {
          ON CONFLICT (name) DO UPDATE SET source = excluded.source, ref = excluded.ref, description = excluded.description, hash = excluded.hash,
            files = excluded.files, updated_at = excluded.updated_at`,
       )
-      .run(name, source, ref, describe(files), hash, JSON.stringify(files), now, now);
+      .run(name, source, ref, describe(files), hash, this.encryption.seal(JSON.stringify(files), `skill:${name}`), now, now);
     this.emit("changed");
     return true;
   }

@@ -1,5 +1,5 @@
 import { networkInterfaces } from "node:os";
-import type { Address, NetworkInfo } from "@vmbridge/contracts";
+import type { Address, CloudflareInfo, NetworkInfo } from "@vmbridge/contracts";
 
 const macAppBinary = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 const httpsPortCandidates = [443, 8443, 10443, 11443, 12443];
@@ -48,7 +48,7 @@ function servedUrl(serve: ServeStatus | null, port: number): string | null {
   return null;
 }
 
-export async function networkInfo(host: string, port: number): Promise<NetworkInfo> {
+export async function networkInfo(host: string, port: number, cloudflare: CloudflareInfo): Promise<NetworkInfo> {
   const addresses: Address[] = [{ kind: "local", label: "This machine", url: `http://127.0.0.1:${port}` }];
   const installed = tailscaleBinary() !== null;
   const status = installed ? await readJson<TailscaleStatus>(["status", "--json"]) : null;
@@ -72,7 +72,8 @@ export async function networkInfo(host: string, port: number): Promise<NetworkIn
 
   const httpsUrl = running ? servedUrl(await readJson<ServeStatus>(["serve", "status", "--json"]), port) : null;
   if (httpsUrl) addresses.push({ kind: "tailscale-https", label: "Tailscale HTTPS", url: httpsUrl });
-  return { host, port, addresses, tailscale: { installed, running, dnsName, httpsUrl } };
+  if (cloudflare.url) addresses.push({ kind: "cloudflare", label: "Cloudflare Tunnel", url: cloudflare.url });
+  return { host, port, addresses, tailscale: { installed, running, dnsName, httpsUrl }, cloudflare };
 }
 
 /**

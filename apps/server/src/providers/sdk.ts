@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   connectSandbox,
   createSandbox,
@@ -40,7 +41,7 @@ export async function retryNotFound<T>(create: () => Promise<T>, tries = 3, dela
       return await create();
     } catch (error) {
       if (attempt >= tries || !notFound(error)) throw error;
-      await Bun.sleep(delayMs * attempt);
+      await sleep(delayMs * attempt);
     }
   }
 }
@@ -126,7 +127,7 @@ export function sdkDriver(options: SdkDriverOptions): Driver {
           const conflict = error instanceof SandboxError && error.code === "invalid_argument";
           if (!conflict || Date.now() > deadline) throw error;
         }
-        await Bun.sleep(1_000);
+        await sleep(1_000);
       }
     },
 

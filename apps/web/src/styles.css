@@ -171,3 +171,148 @@
 .react-flow__attribution {
   display: none;
 }
+
+/* Onboarding motion. Transform and opacity only, each runs once, and reduced motion keeps just the fades. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes ring-out {
+  from {
+    opacity: 0.9;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2);
+  }
+}
+@keyframes spark {
+  from {
+    opacity: 1;
+    transform: rotate(var(--angle)) translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: rotate(var(--angle)) translateY(calc(var(--distance) * -1)) scale(0.3);
+  }
+}
+
+.rise,
+.stagger > * {
+  animation: rise 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.stagger > :nth-child(2) {
+  animation-delay: 50ms;
+}
+.stagger > :nth-child(3) {
+  animation-delay: 100ms;
+}
+.stagger > :nth-child(4) {
+  animation-delay: 150ms;
+}
+.stagger > :nth-child(n + 5) {
+  animation-delay: 200ms;
+}
+.pop-in {
+  animation: pop 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.celebrate-badge {
+  animation: pop 520ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.celebrate-check {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: check-draw 360ms 220ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+.celebrate-ring {
+  opacity: 0;
+  animation: ring-out 700ms 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.celebrate-spark {
+  opacity: 0;
+  animation: spark 650ms 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* A step change slides only the step's content, out one way and in from the other. */
+:root {
+  --step-shift: 16px;
+}
+:root[data-step-transition="back"] {
+  --step-shift: -16px;
+}
+:root[data-step-transition]::view-transition-old(root),
+:root[data-step-transition]::view-transition-new(root) {
+  animation: none;
+}
+::view-transition-old(step) {
+  animation: step-out 160ms ease-in both;
+}
+::view-transition-new(step) {
+  animation: step-in 320ms 60ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes step-out {
+  to {
+    opacity: 0;
+    transform: translateX(calc(var(--step-shift) * -1));
+  }
+}
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--step-shift));
+  }
+}
+/* Finishing onboarding: its panel grows into the dashboard's. */
+::view-transition-group(panel) {
+  animation-duration: 450ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .stagger > *,
+  .pop-in,
+  .celebrate-badge {
+    animation-name: fade;
+  }
+  .celebrate-ring,
+  .celebrate-spark {
+    display: none;
+  }
+  .celebrate-check {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+  ::view-transition-old(step) {
+    animation: 160ms ease-in both reverse fade;
+  }
+  ::view-transition-new(step) {
+    animation: 200ms ease-out both fade;
+  }
+  ::view-transition-group(panel) {
+    animation: none;
+  }
+}

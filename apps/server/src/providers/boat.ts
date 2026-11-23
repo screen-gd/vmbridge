@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import { deflateRawSync } from "node:zlib";
 import { connectSandbox } from "@opencoredev/sandbox-sdk";
 import { boat } from "@opencoredev/sandbox-sdk/boat";
@@ -81,7 +82,7 @@ export const boatProvider: ProviderDefinition = {
         const { state } = await get(sandboxId);
         if (running.has(state)) return;
         if (failed.has(state)) throw new Error(`Boat VM ${sandboxId} is ${state}.`);
-        await Bun.sleep(1000);
+        await sleep(1000);
       }
       throw new Error(`Boat VM ${sandboxId} did not start within 5 minutes.`);
     }
@@ -153,7 +154,7 @@ export const boatProvider: ProviderDefinition = {
             const { snapshot } = await api.request<{ snapshot: BoatSavedSnapshot }>("GET", "/saved-snapshots/{name}", { params: { name } });
             if (snapshot.status === "ready") return name;
             if (snapshot.status === "failed") throw new Error(`Boat could not save the snapshot: ${snapshot.error ?? "no reason given"}.`);
-            await Bun.sleep(2000);
+            await sleep(2000);
           }
           throw new Error("Boat did not finish the snapshot within 10 minutes.");
         } catch (error) {
@@ -185,7 +186,7 @@ export const boatProvider: ProviderDefinition = {
         let { state } = await get(vm.sandboxId);
         // A stop must finish before Boat accepts a resume.
         while (["stopping", "archiving", "securing"].includes(state) && Date.now() < deadline) {
-          await Bun.sleep(1000);
+          await sleep(1000);
           ({ state } = await get(vm.sandboxId));
         }
         if (!running.has(state) && !settling.has(state)) {
