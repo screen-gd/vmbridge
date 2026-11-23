@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { AuthenticationError, ConflictError, MachineFileNotFoundError, NotFoundError, type Machine } from "@boxd-sh/sdk/web";
@@ -166,8 +166,22 @@ describe("commands over gRPC-web", () => {
       { stream: "stderr", text: "warning\n" },
     ]);
     const upload = calls.find((call) => call.method === "upload");
-    expect(String(upload?.args[1])).toStartWith("/tmp/.sandbox-sdk/stdin-");
+    expect(String(upload?.args[1])).toStartWith("/tmp/.sandbox-sdk/stdin/");
     expect(existsSync(String(upload?.args[1]))).toBe(false);
+  });
+
+  test("stdin waits in a folder only the VM's user can read, and is removed when the command never starts", async () => {
+    const { provider, client, calls } = await localBox();
+    const run = client.machines.exec;
+    client.machines.exec = async (id, params) => {
+      if (params.command.includes("vmbridge-exec-")) throw new Error("connection reset");
+      return run(id, params);
+    };
+    const { input } = exec({ command: "bash -s", stdin: "echo secret\n" });
+    await expect(provider.exec("vm-1", input)).rejects.toThrow();
+    const path = String(calls.find((call) => call.method === "upload")?.args[1]);
+    expect(statSync(dirname(path)).mode & 0o777).toBe(0o700);
+    expect(existsSync(path)).toBe(false);
   });
 
   test("a command without stdin reads nothing", async () => {

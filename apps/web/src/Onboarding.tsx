@@ -1,29 +1,30 @@
 import { useEffect, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { ComputerTerminal01Icon, Loading03Icon, MagicWand01Icon, Plug01Icon, Robot01Icon, SquareLock02Icon, Tick02Icon } from "@hugeicons/core-free-icons";
-import type { LocalSkill, Overview } from "@vmbridge/contracts";
+import { ComputerTerminal01Icon, GithubIcon, LinkSquare02Icon, Loading03Icon, MagicWand01Icon, Plug01Icon, Robot01Icon, SquareLock02Icon, Tick02Icon } from "@hugeicons/core-free-icons";
+import type { GitHubAccount, LocalSkill, Overview } from "@vmbridge/contracts";
 import { Button } from "@/components/ui/button";
-import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useAction } from "@/hooks/use-action";
 import { cn } from "@/lib/utils";
 import { api, useLive } from "./api.ts";
 import { AgentLogo, Logo, ProviderLogo } from "./brand.tsx";
-import { agentNames, AgentSection, Providers, ProviderStatus } from "./Setup.tsx";
+import { agentNames, AgentSection, githubTokenHint, githubTokenUrl, Providers, ProviderStatus } from "./Setup.tsx";
 
 const steps = [
   { id: "password", label: "Password", icon: SquareLock02Icon },
   { id: "provider", label: "VM provider", icon: Plug01Icon },
   { id: "agents", label: "Agents", icon: Robot01Icon },
+  { id: "github", label: "GitHub", icon: GithubIcon },
   { id: "sync", label: "Skills", icon: MagicWand01Icon },
 ] as const;
 type Step = (typeof steps)[number]["id"] | "done";
 const order: Step[] = [...steps.map((step) => step.id), "done"];
 
 /**
- * First run: a password, a VM provider, agent sign-ins and skill sync, one screen each. The password needs the setup
+ * First run: a password, a VM provider, agent sign-ins, GitHub and skill sync, one screen each. The password needs the setup
  * code from the terminal's link; every later step needs the session it starts. `onChanged` reloads the login state.
  */
 export function Onboarding({ hasPassword, onChanged }: { hasPassword: boolean; onChanged: () => Promise<void> }) {
@@ -208,15 +209,19 @@ function shake(element: HTMLElement | null) {
   element.animate({ transform: ["translateX(0)", "translateX(-6px)", "translateX(5px)", "translateX(-3px)", "translateX(0)"] }, { duration: 320, easing: "ease-out" });
 }
 
+// The setup code rides in the fragment, which never reaches the server or its logs. It is read once as the page loads
+// and taken out of the address right away, so a setup that fails or is left unfinished does not keep it in history.
+// A reload then asks for the terminal's link again, which works until the password is set.
+const setupCode = new URLSearchParams(location.hash.slice(1)).get("code");
+if (setupCode) history.replaceState(null, "", `${location.pathname}${location.search}`);
+
 function PasswordStep({ onDone }: { onDone: () => void }) {
-  // The fragment never reaches the server or its logs.
-  const [code] = useState(() => new URLSearchParams(location.hash.slice(1)).get("code"));
   const [key, setKey] = useState("");
   const [again, setAgain] = useState("");
   const fields = useRef<HTMLDivElement>(null);
   const action = useAction();
 
-  if (!code) {
+  if (!setupCode) {
     return (
       <StepFrame title="Open your setup link">
         <div className="overflow-hidden rounded-xl border bg-card">
@@ -243,10 +248,8 @@ function PasswordStep({ onDone }: { onDone: () => void }) {
       action.setError("The passwords do not match.");
       return shake(fields.current);
     }
-    void action.run(() => api("/setup", { body: { code, key } })).then((ok) => {
+    void action.run(() => api("/setup", { body: { code: setupCode, key } })).then((ok) => {
       if (!ok) return shake(fields.current);
-      // Used up, so it should not linger in history.
-      history.replaceState(null, "", location.pathname);
       onDone();
     });
   };
@@ -310,8 +313,12 @@ function LiveSteps({ step, go, onFinish }: { step: Exclude<Step, "password">; go
       Back
     </ActionButton>
   );
-  if (step === "agents") return <AgentsStep overview={overview} back={back("provider")} onNext={() => go("sync")} />;
-  if (step === "sync") return <SyncStep overview={overview} sync={sync} onSync={setSync} back={back("agents")} onNext={() => go("done")} />;
+  if (step === "agents") return <AgentsStep overview={overview} back={back("provider")} onNext={() => go("github")} />;
+  if (step === "github") return <GitHubStep account={overview.github} back={back("agents")} onNext={() => go("sync")} />;
+  if (step === "sync") {
+    if (!overview.machine) return <UploadLaterStep back={back("github")} onNext={() => go("done")} />;
+    return <SyncStep overview={overview} sync={sync} onSync={setSync} back={back("github")} onNext={() => go("done")} />;
+  }
   return <Done overview={overview} sync={sync} onOpen={onFinish} />;
 }
 
@@ -367,6 +374,110 @@ function AgentsStep({ overview, back, onNext }: { overview: Overview; back: Reac
           <AgentSection agent={agent} profiles={overview.agents.filter((profile) => profile.agent === agent)} collapsed />
         </div>
       ))}
+    </StepFrame>
+  );
+}
+
+/** Saved through the same route as Setup's GitHub tab, which checks the token with GitHub before keeping it. */
+function GitHubStep({ account, back, onNext }: { account: GitHubAccount | null; back: ReactNode; onNext: () => void }) {
+  const [token, setToken] = useState("");
+  // The saved account shows at once, before the live overview catches up.
+  const [saved, setSaved] = useState<GitHubAccount | null>(null);
+  const connected = saved ?? account;
+  const field = useRef<HTMLDivElement>(null);
+  const action = useAction();
+  const submit = () => {
+    if (connected) return onNext();
+    void action.run(() => api<GitHubAccount>("/github", { method: "PUT", body: { token } }).then(setSaved)).then((ok) => {
+      if (!ok) return shake(field.current);
+      setToken("");
+    });
+  };
+
+  return (
+    <StepFrame
+      title="Connect GitHub"
+      onSubmit={submit}
+      actions={
+        <>
+          {back}
+          {connected ? (
+            <ActionButton key="continue" type="submit" autoFocus>
+              Continue
+            </ActionButton>
+          ) : (
+            <>
+              <ActionButton type="button" variant="outline" onClick={onNext}>
+                Skip
+              </ActionButton>
+              <ActionButton type="submit" busy={action.busy} disabled={!token.trim()}>
+                Connect
+              </ActionButton>
+            </>
+          )}
+        </>
+      }
+    >
+      {connected ? (
+        <div key="account" className="pop-in flex items-center gap-4 rounded-xl border p-4 sm:p-5">
+          <img src={connected.avatarUrl} alt="" referrerPolicy="no-referrer" className="size-10 shrink-0 rounded-full bg-accent" />
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="truncate font-medium">{connected.name ?? connected.login}</span>
+            <span className="truncate text-muted-foreground">@{connected.login}</span>
+          </span>
+          <HugeiconsIcon icon={Tick02Icon} className="size-5 shrink-0 text-success" strokeWidth={2.25} aria-label="Connected" />
+        </div>
+      ) : (
+        <>
+          <Field ref={field} data-invalid={Boolean(action.error)}>
+            <FieldLabel htmlFor="onboarding-github-token">Personal access token</FieldLabel>
+            <Input
+              id="onboarding-github-token"
+              type="password"
+              className="h-10"
+              autoFocus
+              autoComplete="off"
+              placeholder="github_pat_..."
+              aria-invalid={Boolean(action.error) || undefined}
+              value={token}
+              onChange={(event) => {
+                setToken(event.target.value);
+                action.setError(null);
+              }}
+            />
+            {action.error ? <FieldError>{action.error}</FieldError> : <FieldDescription>{githubTokenHint}</FieldDescription>}
+          </Field>
+          <Button asChild variant="outline" size="lg" className="h-10 self-start px-4">
+            <a href={githubTokenUrl} target="_blank" rel="noreferrer">
+              Create a token on GitHub
+              <HugeiconsIcon icon={LinkSquare02Icon} data-icon="inline-end" strokeWidth={1.75} />
+            </a>
+          </Button>
+          <p className="text-muted-foreground">VMs use it to clone, push and open pull requests. You can add it later in Setup.</p>
+        </>
+      )}
+    </StepFrame>
+  );
+}
+
+/** Where VM Bridge has no machine to read from, such as on Cloudflare Workers, skills and instructions are added later. */
+function UploadLaterStep({ back, onNext }: { back: ReactNode; onNext: () => void }) {
+  const finish = useAction();
+  return (
+    <StepFrame
+      title="Skills and instructions"
+      onSubmit={() => void finish.run(() => api("/onboarding", { body: { sync: false } })).then((ok) => ok && onNext())}
+      actions={
+        <>
+          {back}
+          <ActionButton type="submit" busy={finish.busy}>
+            Finish
+          </ActionButton>
+        </>
+      }
+    >
+      <p className="text-muted-foreground">Upload skills and paste your AGENTS.md or CLAUDE.md under Skills. Every VM gets them.</p>
+      {finish.error && <FieldError>{finish.error}</FieldError>}
     </StepFrame>
   );
 }
@@ -474,7 +585,18 @@ function Done({ overview, sync, onOpen }: { overview: Overview; sync: boolean; o
           ))
         ),
     },
-    { label: "Skills", value: sync ? "Synced to every VM" : "Off" },
+    {
+      label: "GitHub",
+      value: overview.github ? (
+        <span className="flex min-w-0 items-center gap-2">
+          <img src={overview.github.avatarUrl} alt="" referrerPolicy="no-referrer" className="size-5 shrink-0 rounded-full bg-accent" />
+          <span className="truncate">@{overview.github.login}</span>
+        </span>
+      ) : (
+        <span className="text-muted-foreground">Not connected</span>
+      ),
+    },
+    { label: "Skills", value: !overview.machine ? <span className="text-muted-foreground">Add them under Skills</span> : sync ? "Synced to every VM" : "Off" },
   ];
 
   return (

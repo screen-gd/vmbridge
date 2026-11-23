@@ -17,10 +17,12 @@ Website and docs: [vmbridge.ordinity.com](https://vmbridge.ordinity.com)
 - One dashboard, behind a password, for providers, GitHub, agent sign-ins, pairing devices and a
   live view of your VMs.
 - Environment variables you set once reach every VM, for agents and shells.
-- Agent skills from [skills.sh](https://skills.sh) or from this machine reach every VM, for Claude
-  Code and Codex.
-- Your global `AGENTS.md` (and Claude Code's `CLAUDE.md`) on this machine can follow you to every VM.
-- Works over your local network, Tailscale and Cloudflare Tunnel.
+- Agent skills from [skills.sh](https://skills.sh), from this machine or uploaded in the dashboard
+  reach every VM, for Claude Code and Codex.
+- Your global `AGENTS.md` and `CLAUDE.md`, pasted in the dashboard or read from this machine, can
+  follow you to every VM.
+- Works over Tailscale, Cloudflare Tunnel and, once you turn it on, your local network. Or deploy it
+  to Cloudflare Workers with one button.
 
 ## Install
 
@@ -32,6 +34,14 @@ curl -fsSL https://raw.githubusercontent.com/vkpdeveloper/vmbridge/main/install.
 
 This installs one `vmbridge` file in `~/.local/bin` (set `VMBRIDGE_INSTALL_DIR` to change it).
 Run the same command again to update.
+
+Or run it on Cloudflare, with no machine of your own: see [Cloudflare Workers](#cloudflare-workers).
+
+Each release file is signed with a build attestation that ties it to the GitHub Actions run and commit that built it. To check an installed file with the [GitHub CLI](https://cli.github.com):
+
+```sh
+gh attestation verify "${VMBRIDGE_INSTALL_DIR:-$HOME/.local/bin}/vmbridge" --repo vkpdeveloper/vmbridge
+```
 
 ## Get started
 
@@ -80,12 +90,19 @@ before they serve anything when they wake. Edits to a local skill reach the VMs 
 seconds. Removing a skill takes it off every VM, and skills put on a VM some other way are left
 alone.
 
+To add a skill that is not on this machine, drop its folder, its `SKILL.md` or a `.zip` of it on
+the **Installed** tab, or use **Choose folder** or **Choose file**. It needs a `SKILL.md` at its top,
+at most 100 files and 1 MB, and no links. Upload it again to update it.
+
 Switch on **Sync all** to install every skill on this machine without picking them one by one. New
 skills in those folders follow within a few seconds, and a skill deleted here comes off the VMs. When
 two folders hold a skill with the same name, the first in the order above wins. Skills over 5 MB are
 skipped. Turning it off keeps what it installed until you remove it.
 
-The AGENTS.md tab on the same page lists each agent's global file found on this machine,
+The **Instructions** tab on the same page takes a pasted `AGENTS.md` (read by Codex and OpenCode)
+and `CLAUDE.md` (read by Claude Code), and every VM gets them where those agents read them. A pasted
+file wins over the agent's file on this machine. Below them it lists each agent's global file found
+on this machine,
 `~/.claude/CLAUDE.md` for Claude Code, `~/.codex/AGENTS.md` for Codex and
 `~/.config/opencode/AGENTS.md` for OpenCode (`$CLAUDE_CONFIG_DIR`, `$CODEX_HOME` and
 `$XDG_CONFIG_HOME` move them). Switch one on and every VM gets it where that agent reads it, the
@@ -95,23 +112,51 @@ file it wrote: if a VM already has its own, or the file was edited on the VM, it
 
 ## Encryption
 
-VM Bridge encrypts everything sensitive it saves, by default, with AES-256-GCM: provider keys, the
-GitHub token, environment variables for VMs, each VM's T3 token, installed skill files and agent
-sign-ins. Chat history, queued messages, logs and settings are not encrypted. They stay in files
-only your user can read.
+VM Bridge encrypts the secrets it saves, by default, with AES-256-GCM: provider keys, the GitHub
+token, environment variables for VMs, each VM's T3 token, installed skill files, pasted `AGENTS.md`
+and `CLAUDE.md`, agent sign-ins and the dashboard password's hash (argon2id).
+
+These are not encrypted, and stay in files only your user can read:
+
+- Chat history: thread transcripts and the copies of them kept while a VM sleeps.
+- Messages waiting for a VM to wake.
+- What each VM's T3 server last reported, such as its configuration.
+- Error messages, the activity log and `vmbridge.log`.
+- Settings, projects, paired devices and usage history.
 
 On first start VM Bridge makes a random key in `~/.vmbridge/encryption.key`, readable only by your
-user. Set `VMBRIDGE_ENCRYPTION_KEY` to 32 random bytes in base64 (`openssl rand -base64 32`) to use
-your own key instead. The key file sits next to your data, so keeping the key outside the folder, in
-that variable, is stronger.
+user. That file sits next to the database, so anyone with a copy of the whole folder, such as a
+backup, can decrypt everything in it. To keep the key apart from your data, set
+`VMBRIDGE_ENCRYPTION_KEY` to the key (the file's contents) and move the file out of the folder. On a
+new install you can instead set the variable to 32 random bytes in base64
+(`openssl rand -base64 32`), or to a passphrase of at least 32 characters, before the first start.
+VM Bridge turns a passphrase into a key the same way every time, here and on Cloudflare.
 
 Back up the key somewhere apart from your data, such as a password manager. VM Bridge will not start
 with the wrong key or without its key, so it never overwrites what you saved. If the key is lost, no
 one can read those values again: start with a new data folder and add your provider keys, agent
 sign-ins, environment variables and GitHub token again.
 
-Updating from a version without encryption encrypts your saved data on first start. After that,
-older versions can't read it, so don't go back to one.
+Updating from a version without encryption encrypts your saved data on first start, so make that
+first start without `VMBRIDGE_ENCRYPTION_KEY` set. After that, older versions can't read it, so
+don't go back to one. VM Bridge never saves a secret unencrypted after that start, so it removes any
+it finds, with an error in its log.
+
+## Addresses
+
+VM Bridge answers on this machine and on Tailscale, whose traffic is already encrypted. It does not
+answer on your local network unless you turn that on under **Settings**, **Addresses**. The local
+network is plain HTTP, so anyone else on the same Wi-Fi could read your password and session as they
+pass. The switch takes effect right away, and turning it off also disconnects devices using it.
+Tailscale works as soon as it is connected, even if it starts after VM Bridge.
+
+`--host` (or `VMBRIDGE_HOST`) makes VM Bridge listen on that one address instead, and the switch
+then has no effect. `--host 0.0.0.0` listens on every network, like versions before this switch;
+`--host 127.0.0.1` keeps VM Bridge to this machine. A background service installed by an older
+version passes `--host 0.0.0.0`, so run `vmbridge service install` again to use the switch.
+
+The addresses in Settings, in the links `vmbridge run` prints and in pairing links are the ones VM
+Bridge answers on right now.
 
 ## Cloudflare Tunnel
 
@@ -144,18 +189,43 @@ update the dashboard tunnel to match. The tunnel's config and credentials live i
   If cloudflared stops on its own, VM Bridge starts it again after a second, waiting longer after
   each failure, up to a minute. Its warnings and errors go to the VM Bridge log with tokens hidden.
 
+## Cloudflare Workers
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/vkpdeveloper/vmbridge)
+
+The button copies VM Bridge to your GitHub account and runs it on your Cloudflare account, on the
+free Workers plan. It asks for two secrets:
+
+- `VMBRIDGE_PASSWORD`: the dashboard password, at least 12 characters.
+- `VMBRIDGE_ENCRYPTION_KEY`: the output of `openssl rand -base64 32`, or a passphrase of at least 32
+  characters. Keep a copy. Without it no one can read your saved keys and sign-ins.
+
+Then open the Worker's address and log in. Pair T3 Code with the same address. There is no setup
+link, local network, Tailscale or tunnel to set up: the Worker's `workers.dev` address (or a domain
+you add to it) is the only one. To change the password, change the secret under the Worker's
+**Settings** in Cloudflare; that also logs everyone out.
+
+There is no machine to read skills or `AGENTS.md` from, so upload skills and paste instructions under
+**Skills**. How it works, limits and costs: [docs/cloudflare.md](docs/cloudflare.md).
+
 ## Commands
 
 ```
-vmbridge [run] [--host 0.0.0.0] [--port 3774]   Start in this terminal
-vmbridge stop                                   Stop, including the background service
-vmbridge service install [--host] [--port]      Run in the background at login
-vmbridge service uninstall                      Remove the background service
-vmbridge password                               Set a new dashboard password
+vmbridge [run] [--host <address>] [--port 3774]   Start in this terminal
+vmbridge stop                                     Stop, including the background service
+vmbridge service install [--host] [--port]        Run in the background at login
+vmbridge service uninstall                        Remove the background service
+vmbridge password                                 Set a new dashboard password
 ```
 
 Your data lives in `~/.vmbridge`. Set `VMBRIDGE_HOME` to keep it somewhere else. On a machine with
 no terminal, set `VMBRIDGE_PASSWORD` for the first start, or run `vmbridge password`.
+
+The dashboard only answers on this machine's own addresses: IP addresses, `localhost`, its hostname,
+its Tailscale names and the Cloudflare Tunnel's hostname, so another website can't point a name of
+its own at VM Bridge and talk to it from your browser. To open the dashboard on another name, such as
+a reverse proxy's domain, list it in `VMBRIDGE_ALLOWED_HOSTS`, separated by commas. T3 apps connect
+on any name.
 
 Sizes, sleep behaviour and notes for each provider: [docs/PROVIDERS.md](docs/PROVIDERS.md).
 

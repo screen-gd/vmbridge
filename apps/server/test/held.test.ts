@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, test } from "bun:test";
-import { openDatabase } from "../src/db.ts";
+import { openDatabase } from "../src/bun/sqlite.ts";
 import type { Fleet } from "../src/fleet.ts";
 import { Hub } from "../src/gateway/hub.ts";
 import { Rpc, type RpcClient } from "../src/gateway/rpc.ts";

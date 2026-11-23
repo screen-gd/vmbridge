@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, test } from "bun:test";
 import { analyticsReport, dayStarts } from "../src/analytics.ts";
-import { openDatabase } from "../src/db.ts";
+import { openDatabase } from "../src/bun/sqlite.ts";
 import type { Fleet } from "../src/fleet.ts";
 import { Hub } from "../src/gateway/hub.ts";
 import type { Wire } from "../src/gateway/types.ts";
@@ -155,7 +155,7 @@ describe("report", () => {
     store.recordVmEvent(a, "create", 1, monday);
     store.deleteVm("b");
     const traffic = new Traffic(db);
-    const at = (ms: number) => db.query("UPDATE errors SET at = ? WHERE id = (SELECT MAX(id) FROM errors)").run(ms);
+    const at = (ms: number) => db.run("UPDATE errors SET at = ? WHERE id = (SELECT MAX(id) FROM errors)", ms);
     traffic.record({ kind: "provider", operation: "sleep VM", vmId: "b", status: "error" });
     at(monday + hour);
     traffic.record({ kind: "provider", operation: "create VM", provider: "boat", status: "error" });

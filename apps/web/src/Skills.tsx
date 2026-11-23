@@ -1,9 +1,28 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import { parseAsStringLiteral, useQueryState } from "nuqs";
 import { toast } from "sonner";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { Add01Icon, ComputerIcon, Delete02Icon, DocumentCodeIcon, LinkSquare02Icon, MagicWand01Icon, RefreshIcon, Search01Icon } from "@hugeicons/core-free-icons";
-import type { InstructionFile, LocalSkill, Overview, SkillInfo, SkillSearchResult } from "@vmbridge/contracts";
+import {
+  Add01Icon,
+  ComputerIcon,
+  Delete02Icon,
+  DocumentCodeIcon,
+  FolderUploadIcon,
+  LinkSquare02Icon,
+  MagicWand01Icon,
+  RefreshIcon,
+  Search01Icon,
+} from "@hugeicons/core-free-icons";
+import {
+  agentKinds,
+  instructionFor,
+  instructionNames,
+  type InstructionName,
+  type LocalSkill,
+  type Overview,
+  type SkillInfo,
+  type SkillSearchResult,
+} from "@vmbridge/contracts";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,13 +37,16 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { FieldError } from "@/components/ui/field";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/components/ui/item";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAction } from "@/hooks/use-action";
+import { cn } from "@/lib/utils";
+import { skillFromFile, skillFromFolderPick, skillsFromDrop, type SkillUpload } from "@/lib/skill-upload";
 import { api } from "./api.ts";
 import { Page, Section, type Tab } from "./Page.tsx";
 import { agentNames } from "./Setup.tsx";
@@ -34,7 +56,7 @@ type SkillsTab = "installed" | "machine" | "instructions";
 const tabs: Tab<SkillsTab>[] = [
   { id: "installed", label: "Installed", icon: MagicWand01Icon },
   { id: "machine", label: "This machine", icon: ComputerIcon },
-  { id: "instructions", label: "AGENTS.md", icon: DocumentCodeIcon },
+  { id: "instructions", label: "Instructions", icon: DocumentCodeIcon },
 ];
 
 /** Past this many installed skills, a filter box helps find one. */
@@ -74,18 +96,21 @@ function EmptyState({ icon = MagicWand01Icon, title, children }: { icon?: IconSv
 
 export function Skills({ overview }: { overview: Overview }) {
   const [tab, setTab] = useQueryState("tab", parseAsStringLiteral(tabs.map((entry) => entry.id)).withDefault("installed"));
+  // Without files of its own (on Cloudflare Workers), VM Bridge has no machine to bring skills from.
+  const shown = overview.machine ? tabs : tabs.filter((entry) => entry.id !== "machine");
+  const current = shown.some((entry) => entry.id === tab) ? tab : "installed";
   return (
-    <Page title="Skills" actions={<SyncState overview={overview} />} tabs={tabs} tab={tab} onTab={setTab}>
-      {tab === "installed" && <InstalledSkills skills={overview.skills} />}
-      {tab === "machine" && <LocalSkills overview={overview} />}
-      {tab === "instructions" && <Instructions files={overview.instructions} />}
+    <Page title="Skills" actions={<SyncState overview={overview} />} tabs={shown} tab={current} onTab={setTab}>
+      {current === "installed" && <InstalledSkills skills={overview.skills} />}
+      {current === "machine" && <LocalSkills overview={overview} />}
+      {current === "instructions" && <Instructions overview={overview} />}
     </Page>
   );
 }
 
 /** Whether every VM has the installed skills and synced instructions yet, once there is anything to sync. */
 function SyncState({ overview }: { overview: Overview }) {
-  if (overview.skills.length === 0 && !overview.instructions.some((file) => file.sync)) return null;
+  if (overview.skills.length === 0 && overview.savedInstructions.length === 0 && !overview.instructions.some((file) => file.sync)) return null;
   const pending = overview.vms.filter((vm) => vm.skillsPending).length;
   return <Badge variant="secondary">{pending ? `${pending} VM${pending === 1 ? "" : "s"} pending` : "On every VM"}</Badge>;
 }
@@ -105,7 +130,7 @@ function InstalledSkills({ skills }: { skills: SkillInfo[] }) {
       }
     >
       {skills.length === 0 ? (
-        <EmptyState title="No skills yet">Skills you install here go to every VM, for Claude Code and Codex.</EmptyState>
+        <UploadSkills empty />
       ) : (
         <>
           {(skills.length >= filterFrom || filter) && (
@@ -125,9 +150,98 @@ function InstalledSkills({ skills }: { skills: SkillInfo[] }) {
               ))}
             </ItemGroup>
           )}
+          <UploadSkills />
         </>
       )}
     </Section>
+  );
+}
+
+const sourceLabels: Record<SkillInfo["source"], string> = { "skills.sh": "skills.sh", local: "This machine", upload: "Uploaded" };
+
+/**
+ * Takes skills dropped on it or picked: each folder, SKILL.md or .zip is one skill. Read and checked in the browser,
+ * then checked again by the server. With `empty`, it is the empty list's placeholder too.
+ */
+function UploadSkills({ empty = false }: { empty?: boolean }) {
+  const action = useAction();
+  const [over, setOver] = useState(false);
+  const folderInput = useRef<HTMLInputElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const upload = (read: () => Promise<SkillUpload[]>) =>
+    void action.run(async () => {
+      const skills = await read();
+      for (const skill of skills) await api("/skills", { body: { source: "upload", ...skill } });
+      const [first] = skills;
+      if (first) toast.success(skills.length === 1 ? `${first.name} installed. Every VM gets it.` : `${skills.length} skills installed. Every VM gets them.`);
+    });
+  const dragOver = (event: DragEvent) => {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setOver(true);
+  };
+  const dragLeave = (event: DragEvent) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(false);
+  };
+  const drop = (event: DragEvent) => {
+    event.preventDefault();
+    setOver(false);
+    // Read now: the browser empties the drop's items once this handler returns.
+    const reading = skillsFromDrop(event.dataTransfer.items);
+    upload(() => reading);
+  };
+  const picked = (read: (files: FileList) => Promise<SkillUpload>) => (event: ChangeEvent<HTMLInputElement>) => {
+    const { files } = event.target;
+    if (files?.length) upload(async () => [await read(files)]);
+    // So picking the same skill again, after fixing it, still counts as a change.
+    event.target.value = "";
+  };
+
+  const pickers: ReactNode = (
+    <div className="flex gap-2">
+      <input
+        ref={(input) => {
+          // React has no prop for it: it makes the picker choose a folder.
+          input?.setAttribute("webkitdirectory", "");
+          folderInput.current = input;
+        }}
+        hidden type="file" onChange={picked(skillFromFolderPick)} />
+      <input ref={fileInput} hidden type="file" accept=".md,.zip,.skill" onChange={picked((files) => skillFromFile(files[0]!))} />
+      <Button variant="outline" disabled={action.busy} onClick={() => folderInput.current?.click()}>
+        Choose folder
+      </Button>
+      <Button variant="outline" disabled={action.busy} onClick={() => fileInput.current?.click()}>
+        Choose file
+      </Button>
+    </div>
+  );
+  const drag = { onDragOver: dragOver, onDragEnter: dragOver, onDragLeave: dragLeave, onDrop: drop };
+  const highlight = over && "border-primary bg-primary/5";
+
+  return (
+    <div className="flex flex-col gap-2">
+      {empty ? (
+        <Empty {...drag} className={cn("border border-dashed transition-colors", highlight)}>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <HugeiconsIcon icon={FolderUploadIcon} strokeWidth={1.75} />
+            </EmptyMedia>
+            <EmptyTitle>No skills yet</EmptyTitle>
+            <EmptyDescription>Drop a skill folder, SKILL.md or .zip here, or add one from skills.sh. Every VM gets it.</EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>{pickers}</EmptyContent>
+        </Empty>
+      ) : (
+        <div {...drag} className={cn("flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-dashed px-4 py-3 transition-colors", highlight)}>
+          <HugeiconsIcon icon={FolderUploadIcon} className="size-5 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+          <span className="min-w-48 flex-1 text-sm text-muted-foreground">Drop a skill folder, SKILL.md or .zip</span>
+          {pickers}
+        </div>
+      )}
+      {action.error && <FieldError>{action.error}</FieldError>}
+    </div>
   );
 }
 
@@ -145,11 +259,11 @@ function Installed({ skill }: { skill: SkillInfo }) {
           <span className="min-w-0 truncate">{skill.name}</span>
           <Badge variant="secondary" className="gap-1.5">
             {skill.source === "local" && <HugeiconsIcon icon={ComputerIcon} className="size-3" strokeWidth={2} />}
-            {skill.source === "local" ? "This machine" : "skills.sh"}
+            {sourceLabels[skill.source]}
           </Badge>
         </ItemTitle>
         {skill.description && <ItemDescription className="line-clamp-1">{skill.description}</ItemDescription>}
-        <ItemDescription className="truncate font-mono text-xs">{skill.ref}</ItemDescription>
+        {skill.ref && <ItemDescription className="truncate font-mono text-xs">{skill.ref}</ItemDescription>}
         {action.error && <FieldError>{action.error}</FieldError>}
       </ItemContent>
       <ItemActions className="gap-0.5">
@@ -325,28 +439,128 @@ function LocalSkills({ overview }: { overview: Overview }) {
   );
 }
 
-function Instructions({ files }: { files: InstructionFile[] }) {
-  const action = useAction();
-  const toggle = (file: InstructionFile, sync: boolean) => void action.run(() => api(`/instructions/${file.agent}`, { method: "PUT", body: { sync } }));
+function Instructions({ overview }: { overview: Overview }) {
+  const [saved, setSaved] = useState<Partial<Record<InstructionName, string>> | null>(null);
+  // A failed load must not look like nothing saved, or saving would overwrite files the user could not see.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const load = () => {
+    setLoadFailed(false);
+    void api<Partial<Record<InstructionName, string>>>("/instructions").then(setSaved, () => setLoadFailed(true));
+  };
+  useEffect(load, []);
   return (
-    <Section title="AGENTS.md">
+    <>
+      {loadFailed && (
+        <Section title="Pasted files">
+          <FieldError>Could not load your pasted files.</FieldError>
+          <div className="flex justify-end">
+            <Button variant="outline" onClick={load}>
+              Try again
+            </Button>
+          </div>
+        </Section>
+      )}
+      {saved &&
+        instructionNames.map((name) => <PastedFile key={name} name={name} saved={saved[name] ?? ""} onSaved={setSaved} />)}
+      {overview.machine && <MachineInstructions overview={overview} />}
+    </>
+  );
+}
+
+/** A pasted AGENTS.md or CLAUDE.md. Saving it blank removes it. */
+function PastedFile({ name, saved, onSaved }: { name: InstructionName; saved: string; onSaved: (saved: Partial<Record<InstructionName, string>>) => void }) {
+  const [draft, setDraft] = useState(saved);
+  const action = useAction();
+  const readers = agentKinds.filter((agent) => instructionFor[agent] === name).map((agent) => agentNames[agent]);
+  const save = (text: string) =>
+    void action
+      .run(async () => onSaved(await api(`/instructions/${name}`, { method: "PUT", body: { text } })))
+      .then((ok) => {
+        if (!ok) return;
+        if (!text.trim()) setDraft("");
+        toast.success(text.trim() ? `${name} saved. Every VM gets it.` : `${name} removed.`);
+      });
+  return (
+    <Section
+      title={name}
+      actions={
+        <div className="flex gap-1.5">
+          {readers.map((reader) => (
+            <Badge key={reader} variant="secondary">
+              {reader}
+            </Badge>
+          ))}
+        </div>
+      }
+    >
+      <Textarea
+        aria-label={name}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        disabled={action.busy}
+        placeholder={`Paste your ${name}`}
+        spellCheck={false}
+        className="max-h-[60vh] min-h-40 font-mono text-xs md:text-xs"
+      />
+      {action.error && <FieldError>{action.error}</FieldError>}
+      <div className="flex justify-end gap-2">
+        {saved && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="ghost" className="text-muted-foreground hover:text-destructive" disabled={action.busy}>
+                Remove
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Remove {name}?</AlertDialogTitle>
+                <AlertDialogDescription>It comes off every VM, unless it was edited there.</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction variant="destructive" onClick={() => save("")}>
+                  Remove
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
+        <Button disabled={action.busy || draft === saved} onClick={() => save(draft)}>
+          Save
+        </Button>
+      </div>
+    </Section>
+  );
+}
+
+/** The agents' own files on the machine VM Bridge runs on. A pasted file wins over them. */
+function MachineInstructions({ overview }: { overview: Overview }) {
+  const action = useAction();
+  const files = overview.instructions;
+  const toggle = (agent: string, sync: boolean) => void action.run(() => api(`/instructions/${agent}`, { method: "PUT", body: { sync } }));
+  return (
+    <Section title="This machine">
       {files.length === 0 ? (
         <EmptyState icon={DocumentCodeIcon} title="No instructions files">No CLAUDE.md or AGENTS.md in ~/.claude, ~/.codex or ~/.config/opencode.</EmptyState>
       ) : (
         <ItemGroup className="gap-2">
-          {files.map((file) => (
-            <Item key={file.agent} variant="outline" size="sm">
-              <ItemContent className="min-w-0">
-                <ItemTitle>
-                  <label htmlFor={`instructions-${file.agent}`}>{agentNames[file.agent]}</label>
-                </ItemTitle>
-                <ItemDescription className="truncate font-mono text-xs">{file.path}</ItemDescription>
-              </ItemContent>
-              <ItemActions>
-                <Switch id={`instructions-${file.agent}`} checked={file.sync} disabled={action.busy} onCheckedChange={(sync) => toggle(file, sync)} />
-              </ItemActions>
-            </Item>
-          ))}
+          {files.map((file) => {
+            const pasted = overview.savedInstructions.includes(instructionFor[file.agent]);
+            return (
+              <Item key={file.agent} variant="outline" size="sm">
+                <ItemContent className="min-w-0">
+                  <ItemTitle>
+                    <label htmlFor={`instructions-${file.agent}`}>{agentNames[file.agent]}</label>
+                  </ItemTitle>
+                  <ItemDescription className="truncate font-mono text-xs">{file.path}</ItemDescription>
+                  {pasted && file.sync && <ItemDescription>Using the pasted {instructionFor[file.agent]} instead.</ItemDescription>}
+                </ItemContent>
+                <ItemActions>
+                  <Switch id={`instructions-${file.agent}`} checked={file.sync} disabled={action.busy} onCheckedChange={(sync) => toggle(file.agent, sync)} />
+                </ItemActions>
+              </Item>
+            );
+          })}
         </ItemGroup>
       )}
       {action.error && <FieldError>{action.error}</FieldError>}

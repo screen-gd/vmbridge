@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { Sql } from "./sql.ts";
 import { machineNameMaxLength, type AgentKind, type GitHubAccount, type ProviderId, type RepoRule, type VmSize } from "@vmbridge/contracts";
 import { Encryption } from "./encryption.ts";
 import type { ServerConfig } from "./gateway/types.ts";
@@ -11,7 +11,6 @@ export interface ProviderPreference {
 interface SettingValues {
   /** Stable T3 environment identity. Never changes once created. */
   bridgeId: string;
-  dashboardKeyHash: string | null;
   /** Whether first-run onboarding was finished. Until then the dashboard sends you there. */
   onboarded: boolean;
   /** The name T3 shows for this machine. */
@@ -34,7 +33,7 @@ interface SettingValues {
   shellSequence: number;
   /** T3 agent provider switches and display names set from T3's settings screen. */
   agentPreferences: Record<string, ProviderPreference>;
-  /** The sign-in profile each agent uses on every VM. Profiles live under `<data dir>/auths`. */
+  /** The sign-in profile each agent uses on every VM (see agent-auth/profiles.ts). */
   agentProfiles: Partial<Record<AgentKind, string>>;
   /** Agents whose global instructions file on this machine every VM gets. */
   instructionSync: Partial<Record<AgentKind, boolean>>;
@@ -48,7 +47,13 @@ interface SettingValues {
    * A dashboard tunnel's token is the `cloudflare.tunnelToken` secret.
    */
   cloudflareTunnel: { enabled: boolean; hostname: string | null; port: number | null };
+  /** Listen on the local network too. Off by default, for existing installs as well: it is plain HTTP. */
+  localNetwork: boolean;
 }
+
+/** The dashboard password's hash. Older versions kept it unencrypted, as the `dashboardKeyHash` setting. */
+export const passwordHashSecret = "dashboard.passwordHash";
+const legacyPasswordHash = "dashboardKeyHash";
 
 const defaultMachineName = "VM Bridge";
 
@@ -60,7 +65,6 @@ export function machineName(input: string): string | null {
 
 const defaults: { [K in keyof SettingValues]: () => SettingValues[K] } = {
   bridgeId: () => crypto.randomUUID(),
-  dashboardKeyHash: () => null,
   onboarded: () => false,
   machineName: () => defaultMachineName,
   providers: () => [],
@@ -78,63 +82,80 @@ const defaults: { [K in keyof SettingValues]: () => SettingValues[K] } = {
   syncLocalSkills: () => false,
   fallbackConfig: () => null,
   cloudflareTunnel: () => ({ enabled: false, hostname: null, port: null }),
+  localNetwork: () => false,
 };
 
 export class Settings {
-  constructor(private readonly db: Database) {
+  constructor(private readonly db: Sql) {
     // Persist the identity on first start so pairings survive restarts.
-    if (!this.db.query("SELECT 1 FROM settings WHERE key = 'bridgeId'").get()) this.set("bridgeId", defaults.bridgeId());
-    // Installs from before onboarding existed that already have a password and a provider never need it.
-    if (!this.db.query("SELECT 1 FROM settings WHERE key = 'onboarded'").get()) {
-      this.set("onboarded", this.get("dashboardKeyHash") !== null && this.get("providers").length > 0);
+    if (!this.db.one("SELECT 1 FROM settings WHERE key = 'bridgeId'")) this.set("bridgeId", defaults.bridgeId());
+    // Installs from before onboarding existed that already have a password and a provider never need it. Their
+    // password hash is still the plain setting that `Secrets.plaintext` moves later.
+    if (!this.db.one("SELECT 1 FROM settings WHERE key = 'onboarded'")) {
+      const hasPassword = this.db.one("SELECT 1 FROM settings WHERE key = ?", legacyPasswordHash) !== undefined;
+      this.set("onboarded", hasPassword && this.get("providers").length > 0);
     }
   }
 
   get<K extends keyof SettingValues>(key: K): SettingValues[K] {
-    const row = this.db.query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?").get(key);
+    const row = this.db.one<{ value: string }>("SELECT value FROM settings WHERE key = ?", key);
     return row ? (JSON.parse(row.value) as SettingValues[K]) : defaults[key]();
   }
 
   set<K extends keyof SettingValues>(key: K, value: SettingValues[K]): void {
-    this.db
-      .query("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
-      .run(key, JSON.stringify(value));
+    this.db.run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", key, JSON.stringify(value));
   }
 }
+
+/**
+ * What to do with a value stored unencrypted: `seal` it when it was saved before VM Bridge encrypted its data, or
+ * `drop` it once that was done, since VM Bridge never writes one after and someone else must have put it there.
+ */
+export type Plaintext = "seal" | "drop";
 
 /** Secret values never leave the server through the admin API; only their presence does. Stored encrypted. */
 export class Secrets {
   constructor(
-    private readonly db: Database,
+    private readonly db: Sql,
     private readonly encryption: Encryption,
   ) {}
 
   get(name: string): string | undefined {
-    const value = this.db.query<{ value: string }, [string]>("SELECT value FROM secrets WHERE name = ?").get(name)?.value;
+    const value = this.db.one<{ value: string }>("SELECT value FROM secrets WHERE name = ?", name)?.value;
     return value === undefined ? undefined : this.encryption.open(value, `secret:${name}`);
   }
 
   has(name: string): boolean {
-    return this.db.query("SELECT 1 FROM secrets WHERE name = ?").get(name) !== null;
+    return this.db.one("SELECT 1 FROM secrets WHERE name = ?", name) !== undefined;
   }
 
   set(name: string, value: string | null): void {
-    if (value === null || value === "") this.db.query("DELETE FROM secrets WHERE name = ?").run(name);
+    if (value === null || value === "") this.db.run("DELETE FROM secrets WHERE name = ?", name);
     else {
-      this.db
-        .query("INSERT INTO secrets (name, value) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value")
-        .run(name, this.encryption.seal(value, `secret:${name}`));
+      this.db.run(
+        "INSERT INTO secrets (name, value) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value",
+        name, this.encryption.seal(value, `secret:${name}`),
+      );
     }
   }
 
-  /** Encrypts values saved before secrets were encrypted. Returns how many. */
-  sealPlaintext(): number {
-    const rows = this.db.query<{ name: string; value: string }, []>("SELECT name, value FROM secrets").all();
+  /**
+   * Encrypts, or drops, values stored unencrypted (see `Plaintext`), including the password hash older versions kept
+   * in settings. Returns what it changed.
+   */
+  plaintext(action: Plaintext): string[] {
+    const rows = this.db.all<{ name: string; value: string }>("SELECT name, value FROM secrets");
     const plain = rows.filter((row) => !Encryption.isSealed(row.value));
+    const legacy = this.db.one<{ value: string }>("SELECT value FROM settings WHERE key = ?", legacyPasswordHash);
     this.db.transaction(() => {
-      for (const row of plain) this.set(row.name, row.value);
-    })();
-    return plain.length;
+      for (const row of plain) this.set(row.name, action === "seal" ? row.value : null);
+      if (legacy) {
+        // Planted later, it would choose the dashboard password.
+        if (action === "seal") this.set(passwordHashSecret, JSON.parse(legacy.value) as string | null);
+        this.db.run("DELETE FROM settings WHERE key = ?", legacyPasswordHash);
+      }
+    });
+    return [...plain.map((row) => `secret ${row.name}`), ...(legacy ? ["old dashboard password setting"] : [])];
   }
 }
 

@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import type { AgentSecrets } from "../agent-auth/profiles.ts";
+import type { Encryption } from "../encryption.ts";
 import type { Box } from "../providers/index.ts";
 
 /** Everything VM Bridge installs or keeps lives here, on the disk that survives sleep. */
@@ -107,12 +109,12 @@ export function envValueProblem(value: string) {
   return null;
 }
 
-function envFile(credentials: VmCredentials) {
+function envFile(credentials: VmCredentials, fingerprint: string) {
   const lines = [
     `unset ${providerVars.join(" ")}`,
     `export PATH="${root}/node/bin:${root}/npm/bin:${root}/gh/bin:$PATH"`,
     // Not exported: only start-t3.sh reads it, to record what the server starts with.
-    `VMBRIDGE_CREDENTIALS=${credentialsFingerprint(credentials)}`,
+    `VMBRIDGE_CREDENTIALS=${fingerprint}`,
   ];
   for (const [name, value] of Object.entries(managedVars(credentials))) if (value) lines.push(`export ${name}=${quote(value)}`);
   // Single quotes keep every value exact, newlines and `$` included. An empty one is still set. A name saved before it
@@ -227,7 +229,7 @@ printf '%s' "$stamp" > ${setupStampPath}
  * when it connects.
  */
 export function setupStamp(t3Version: string) {
-  return new Bun.CryptoHasher("sha256").update(`${setupScript}\n${t3Version}`).digest("hex");
+  return createHash("sha256").update(`${setupScript}\n${t3Version}`).digest("hex");
 }
 
 // Sets only VMBRIDGE_ variables, which the dashboard cannot: assigning a name the env file exported would change it for T3
@@ -250,6 +252,33 @@ exec t3 --base-dir ${t3DataDir} --host 0.0.0.0 --port ${t3Port} --no-browser
 /** Prints T3's environment descriptor, or exits 1 when no server answers. */
 const probeScript = `fetch("http://127.0.0.1:${t3Port}/.well-known/t3/environment",{signal:AbortSignal.timeout(10000)}).then(r=>r.ok?r.text():Promise.reject()).then(t=>process.stdout.write(t),()=>process.exit(1))`;
 const probe = `. ${root}/env && node -e ${quote(probeScript)}`;
+
+/** T3's settings file, which it reloads whenever the file changes. */
+const t3SettingsPath = `${t3DataDir}/userdata/settings.json`;
+
+/**
+ * Switches on T3's OpenCode instance, which T3 ships switched off. Leaves the file alone when it already says whether
+ * OpenCode is on, so a user who switched it off on the VM keeps it off, and when it is not a settings object.
+ */
+const enableOpenCodeScript = `const fs = require("fs");
+const path = process.argv[1];
+let settings = {};
+try {
+  settings = JSON.parse(fs.readFileSync(path, "utf8"));
+} catch (error) {
+  if (error.code !== "ENOENT") process.exit(0);
+}
+const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+if (!isObject(settings)) process.exit(0);
+const instances = settings.providerInstances ?? {};
+if (!isObject(instances)) process.exit(0);
+const opencode = instances.opencode;
+if (opencode !== undefined && !isObject(opencode)) process.exit(0);
+if (typeof opencode?.enabled === "boolean" || typeof opencode?.config?.enabled === "boolean") process.exit(0);
+settings.providerInstances = { ...instances, opencode: { driver: "opencode", ...opencode, enabled: true } };
+fs.mkdirSync(require("path").dirname(path), { recursive: true });
+fs.writeFileSync(path + ".vmbridge-new", JSON.stringify(settings, null, 2) + "\\n");
+fs.renameSync(path + ".vmbridge-new", path);`;
 
 /** Exits 0 when the first Codex auth.json was refreshed later than the second. */
 const newerScript = `const at=(p)=>Date.parse(JSON.parse(require("fs").readFileSync(p,"utf8")).last_refresh);process.exit(at(process.argv[1])>at(process.argv[2])?0:1)`;
@@ -278,9 +307,9 @@ export async function check(box: Box, command: string, what: string, timeoutMs =
  * Identifies the sign-ins and variables a T3 server starts with, to tell when a running one has older ones. Codex counts by
  * sign-in rather than by auth.json, which changes every time its tokens refresh and needs no restart.
  */
-export function credentialsFingerprint(credentials: VmCredentials) {
+export function credentialsFingerprint(credentials: VmCredentials, encryption: Encryption) {
   const { codexAuthJson: _refreshes, ...rest } = credentials;
-  return new Bun.CryptoHasher("sha256").update(JSON.stringify(rest)).digest("hex");
+  return encryption.fingerprint(JSON.stringify(rest));
 }
 
 /** Writes a file atomically, creating its folder, from base64 on stdin. */
@@ -307,9 +336,9 @@ async function runProgram(box: Box, body: string, what: string, timeoutMs = 120_
 }
 
 /** The sign-in files to write, Codex's aside, and those to delete because their sign-in is gone. */
-function signIns(credentials: VmCredentials) {
+function signIns(credentials: VmCredentials, fingerprint: string) {
   const { github, codexAuthJson } = credentials;
-  const files: Record<string, string> = { [`${root}/env`]: envFile(credentials), [gitConfigPath]: gitConfig(github) };
+  const files: Record<string, string> = { [`${root}/env`]: envFile(credentials, fingerprint), [gitConfigPath]: gitConfig(github) };
   if (github) files[gitCredentialsPath] = `https://${encodeURIComponent(github.login)}:${encodeURIComponent(github.token)}@github.com\n`;
   // Older versions kept the GitHub token in `github` too.
   const removed = [`${root}/github`, ...(github ? [] : [gitCredentialsPath]), ...(codexAuthJson ? [] : [codexAuthPath])];
@@ -320,8 +349,8 @@ function signIns(credentials: VmCredentials) {
  * Writes the sign-ins into the VM, removing those that are gone. Git and gh read them on their next command;
  * agents get them from T3's environment, so only once T3 restarts.
  */
-export async function writeCredentials(box: Box, credentials: VmCredentials) {
-  const { files, removed } = signIns(credentials);
+export async function writeCredentials(box: Box, credentials: VmCredentials, fingerprint: string) {
+  const { files, removed } = signIns(credentials, fingerprint);
   if (credentials.codexAuthJson) files[codexAuthPath] = credentials.codexAuthJson;
   await runProgram(box, ["umask 077", put, writes(files), `rm -f ${removed.join(" ")}`].join("\n"), "Writing sign-ins");
 }
@@ -345,9 +374,10 @@ export interface PreparedVm {
 /**
  * Brings a VM up to date in one exec, on every wake and connect: writes the sign-ins and scripts, runs setup unless the
  * VM's stamp says it already did for this T3 version, and reports what the connect needs next (see `PreparedVm`).
+ * `fingerprint` is the credentials' `credentialsFingerprint`, which T3 records when it starts with them.
  */
-export async function prepareVm(box: Box, t3Version: string, credentials: VmCredentials): Promise<PreparedVm> {
-  const { files, removed } = signIns(credentials);
+export async function prepareVm(box: Box, t3Version: string, credentials: VmCredentials, fingerprint: string): Promise<PreparedVm> {
+  const { files, removed } = signIns(credentials, fingerprint);
   const stamp = setupStamp(t3Version);
   const incoming = `${codexAuthPath}.incoming`;
   const lines = [
@@ -359,8 +389,12 @@ export async function prepareVm(box: Box, t3Version: string, credentials: VmCred
     `. ${root}/env`,
     // Setup's output goes to stderr: stdout is the report below. A VM that lost T3 since its stamp runs setup again.
     `if [ "$(cat ${setupStampPath} 2>/dev/null)" != ${quote(stamp)} ] || ! command -v t3 >/dev/null; then bash ${root}/setup.sh ${quote(t3Version)} ${quote(stamp)} >&2; fi`,
-    // Outside setup, as it follows the sign-ins rather than the image.
-    `[ -z "\${OPENCODE_API_KEY:-}" ] || command -v opencode >/dev/null || npm install -g --prefix ${root}/npm --no-audit --no-fund --loglevel=error opencode-ai >&2`,
+    // Outside setup, as it follows the sign-ins rather than the image. Only with a sign-in: without one the CLI is not
+    // installed, and T3 would list OpenCode as broken.
+    `if [ -n "\${OPENCODE_API_KEY:-}" ]; then`,
+    `  command -v opencode >/dev/null || npm install -g --prefix ${root}/npm --no-audit --no-fund --loglevel=error opencode-ai >&2`,
+    `  node -e ${quote(enableOpenCodeScript)} ${t3SettingsPath}`,
+    "fi",
   ];
   if (credentials.codexAuthJson) {
     lines.push(
@@ -472,7 +506,8 @@ async function probeT3(box: Box) {
  * The setup stamp stays, so those VMs skip setup when they first connect.
  */
 export async function prepareBase(box: Box, t3Version: string) {
-  await prepareVm(box, t3Version, {});
+  // No sign-ins, so nothing to fingerprint; the env file goes before the snapshot anyway.
+  await prepareVm(box, t3Version, {}, "");
   await startT3(box, null);
   await box.process("t3").stop();
   // Providers snapshot a running VM like a power cut (Instabox says so), so writes still in memory would be lost.

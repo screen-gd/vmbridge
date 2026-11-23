@@ -1,4 +1,5 @@
 import type { Preview } from "@opencoredev/sandbox-sdk";
+import type { OpenSocket } from "../runtime.ts";
 
 /** One Effect RPC frame. VM Bridge forwards T3's payloads without modelling them. */
 export type Frame = { _tag: string; [key: string]: unknown };
@@ -31,6 +32,7 @@ export class Backend {
     readonly vmId: string,
     private readonly preview: Preview,
     private readonly token: string,
+    private readonly openSocket: OpenSocket,
   ) {}
 
   get open() {
@@ -40,8 +42,10 @@ export class Backend {
   private url(path: string) {
     const base = new URL(this.preview.url);
     const url = new URL(path, base.origin);
-    // Some providers carry preview credentials in the query string.
-    for (const [key, value] of base.searchParams) if (!url.searchParams.has(key)) url.searchParams.set(key, value);
+    // Some providers carry preview credentials in the query string. They replace any the client sent under the same
+    // name, which would otherwise reach the provider's proxy in place of the real ones.
+    for (const key of new Set(base.searchParams.keys())) url.searchParams.delete(key);
+    for (const [key, value] of base.searchParams) url.searchParams.append(key, value);
     return url;
   }
 
@@ -86,34 +90,25 @@ export class Backend {
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("wsTicket", ((await ticket.json()) as { ticket: string }).ticket);
 
-    await new Promise<void>((resolve, reject) => {
-      const options: Bun.WebSocketOptions = { headers: this.preview.headers ?? {} };
-      const socket = new WebSocket(url, options);
-      this.socket = socket;
-      let opened = false;
-      const timer = setTimeout(() => {
-        socket.close();
-        reject(new Error(`Connecting to T3 on VM ${this.vmId} timed out.`));
-      }, timeoutMs);
-      socket.onopen = () => {
-        opened = true;
-        clearTimeout(timer);
-        resolve();
-      };
-      socket.onerror = () => {
-        clearTimeout(timer);
-        if (!opened) reject(new Error(`Cannot open the T3 socket on VM ${this.vmId}.`));
-      };
-      socket.onmessage = (event) => this.receive(String(event.data));
-      socket.onclose = () => {
-        clearTimeout(timer);
-        if (!opened) reject(new Error(`The T3 socket on VM ${this.vmId} closed while connecting.`));
-        clearInterval(this.heartbeat);
-        // First, so the streams this ends see the VM reconnecting rather than a dropped connection.
-        if (!this.closing) this.onClose?.();
-        for (const [requestId, handler] of this.handlers) handler(disconnected(requestId));
-        this.handlers.clear();
-      };
+    let socket: WebSocket;
+    try {
+      socket = await this.openSocket(url, this.preview.headers ?? {}, timeoutMs);
+    } catch (error) {
+      throw new Error(`Cannot open the T3 socket on VM ${this.vmId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (this.closing) {
+      socket.close();
+      throw new Error(`The T3 socket on VM ${this.vmId} closed while connecting.`);
+    }
+    this.socket = socket;
+    // Listeners, not onmessage and onclose, which Workers' WebSocket lacks.
+    socket.addEventListener("message", (event) => this.receive(String(event.data)));
+    socket.addEventListener("close", () => {
+      clearInterval(this.heartbeat);
+      // First, so the streams this ends see the VM reconnecting rather than a dropped connection.
+      if (!this.closing) this.onClose?.();
+      for (const [requestId, handler] of this.handlers) handler(disconnected(requestId));
+      this.handlers.clear();
     });
     this.heartbeat = setInterval(() => this.open && this.socket?.send('{"_tag":"Ping"}'), 5_000);
   }

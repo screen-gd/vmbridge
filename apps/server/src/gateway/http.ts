@@ -1,4 +1,3 @@
-import type { Server, ServerWebSocket, WebSocketHandler } from "bun";
 import type { Clients } from "../auth/clients.ts";
 import { clientSessionMs } from "../auth/clients.ts";
 import { message } from "../fleet.ts";
@@ -11,6 +10,23 @@ export interface SocketData {
   clientId: string;
   cancels: Map<string, () => void>;
 }
+
+/** A connected T3 client: Bun's ServerWebSocket, or a Worker's WebSocket with its data beside it. */
+export interface ClientSocket {
+  readonly data: SocketData;
+  readonly readyState: number;
+  send(message: string): unknown;
+  close(code?: number, reason?: string): void;
+}
+
+/**
+ * Accepts a `/ws` upgrade with `data` for the new socket, which then reports to `opened`, `received` and `closed`.
+ * Returns the response to send, undefined when the runtime answers the upgrade itself (Bun), or null when the request
+ * is not a WebSocket upgrade.
+ */
+export type Upgrade = (request: Request, data: SocketData) => Response | undefined | null;
+
+const open = 1;
 
 const json = (value: unknown, status = 200) => Response.json(value, { status });
 const unauthenticated = () => json({ code: "auth_invalid", reason: "invalid_credential", traceId: crypto.randomUUID() }, 401);
@@ -30,7 +46,7 @@ export const isT3Path = (path: string) => path === "/ws" || path === "/oauth/tok
  * origin may call them; the hosted and desktop T3 apps come from origins VM Bridge cannot list.
  */
 export class T3Gateway {
-  private readonly sockets = new Set<ServerWebSocket<SocketData>>();
+  private readonly sockets = new Set<ClientSocket>();
   private readonly expiry: ReturnType<typeof setInterval>;
 
   constructor(
@@ -52,12 +68,12 @@ export class T3Gateway {
     for (const socket of this.sockets) if (socket.data.clientId === clientId) socket.close(1008, "Device removed");
   }
 
-  async fetch(request: Request, server: Server<SocketData>): Promise<Response | undefined> {
+  async fetch(request: Request, upgrade: Upgrade): Promise<Response | undefined> {
     const origin = request.headers.get("origin");
     const started = performance.now();
     const path = new URL(request.url).pathname;
     const seen: { clientId?: string } = {};
-    const response = await this.route(request, server, seen).catch((error) =>
+    const response = await this.route(request, upgrade, seen).catch((error) =>
       json({ error: "bridge_unavailable", message: message(error) }, 503),
     );
     if (!response) return undefined;
@@ -66,7 +82,10 @@ export class T3Gateway {
       response.headers.set("vary", "Origin");
     }
     response.headers.set("cache-control", "no-store");
-    if (path !== "/api/auth/session") {
+    if (!seen.clientId) {
+      // Anyone can send these, so failures are only counted. Pairing logs itself; discovery and preflights are not worth a line.
+      if (!response.ok) this.hub.traffic.refused();
+    } else if (path !== "/api/auth/session") {
       this.hub.traffic.record({
         kind: "http",
         operation: `${request.method} ${path.replace(/\/threads\/[^/]+/, "/threads/:id")}`,
@@ -78,7 +97,7 @@ export class T3Gateway {
     return response;
   }
 
-  private async route(request: Request, server: Server<SocketData>, seen: { clientId?: string }): Promise<Response | undefined> {
+  private async route(request: Request, upgrade: Upgrade, seen: { clientId?: string }): Promise<Response | undefined> {
     const url = new URL(request.url);
     const path = url.pathname;
     if (request.method === "OPTIONS") {
@@ -98,8 +117,8 @@ export class T3Gateway {
       }
       const clientId = this.clients.redeemTicket(url.searchParams.get("wsTicket") ?? "");
       if (!clientId) return unauthenticated();
-      if (server.upgrade(request, { data: { clientId, cancels: new Map() } })) return undefined;
-      return json({ error: "websocket_required" }, 400);
+      const upgraded = upgrade(request, { clientId, cancels: new Map() });
+      return upgraded === null ? json({ error: "websocket_required" }, 400) : upgraded;
     }
 
     const bearer = request.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
@@ -163,7 +182,7 @@ export class T3Gateway {
     const vmId = await this.hub.routeSoon({ threadId });
     const backend = this.hub.fleet.backend(vmId);
     if (!backend) {
-      const cached = this.hub.sleepingProjection(threadId);
+      const cached = this.hub.sleepingProjection(threadId, vmId);
       if (!cached) return json({ error: "vm_sleeping_no_snapshot" }, 503);
       const projection = this.hub.out(cached, vmId) as Projection;
       const snapshotSequence = this.hub.shellSequence(vmId);
@@ -183,40 +202,39 @@ export class T3Gateway {
     return json(this.hub.out(value, vmId), upstream.status);
   }
 
-  readonly websocket: WebSocketHandler<SocketData> = {
-    maxPayloadLength: 16 * 1024 * 1024,
-    open: (socket) => {
-      this.sockets.add(socket);
-      this.hub.traffic.record({ kind: "system", operation: "Device connected", clientId: socket.data.clientId });
-      this.hub.fleet.emit("changed");
-    },
-    message: (socket, raw) => {
-      if (!this.clients.valid(socket.data.clientId)) return socket.close(1008, "Session expired");
-      let decoded: unknown;
-      try {
-        decoded = JSON.parse(String(raw));
-      } catch {
-        return socket.close(1008, "Invalid JSON");
-      }
-      const client: RpcClient = {
-        clientId: socket.data.clientId,
-        cancels: socket.data.cancels,
-        send: (frame) => {
-          if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame));
-        },
-        open: () => socket.readyState === WebSocket.OPEN && this.clients.valid(socket.data.clientId),
-      };
-      for (const frame of Array.isArray(decoded) ? decoded : [decoded]) {
-        this.rpc.handle(client, frame as Frame).catch(() => socket.close(1008, "Invalid RPC message"));
-      }
-    },
-    close: (socket) => {
-      this.sockets.delete(socket);
-      for (const cancel of socket.data.cancels.values()) cancel();
-      socket.data.cancels.clear();
-      this.hub.fleet.emit("changed");
-    },
-  };
+  opened(socket: ClientSocket) {
+    this.sockets.add(socket);
+    this.hub.traffic.record({ kind: "system", operation: "Device connected", clientId: socket.data.clientId });
+    this.hub.fleet.emit("changed");
+  }
+
+  received(socket: ClientSocket, raw: string) {
+    if (!this.clients.valid(socket.data.clientId)) return socket.close(1008, "Session expired");
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(raw);
+    } catch {
+      return socket.close(1008, "Invalid JSON");
+    }
+    const client: RpcClient = {
+      clientId: socket.data.clientId,
+      cancels: socket.data.cancels,
+      send: (frame) => {
+        if (socket.readyState === open) socket.send(JSON.stringify(frame));
+      },
+      open: () => socket.readyState === open && this.clients.valid(socket.data.clientId),
+    };
+    for (const frame of Array.isArray(decoded) ? decoded : [decoded]) {
+      this.rpc.handle(client, frame as Frame).catch(() => socket.close(1008, "Invalid RPC message"));
+    }
+  }
+
+  closed(socket: ClientSocket) {
+    this.sockets.delete(socket);
+    for (const cancel of socket.data.cancels.values()) cancel();
+    socket.data.cancels.clear();
+    this.hub.fleet.emit("changed");
+  }
 
   close() {
     clearInterval(this.expiry);

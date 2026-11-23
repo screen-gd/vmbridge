@@ -1,16 +1,65 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import type { CloudflareInfo, TunnelMode } from "@vmbridge/contracts";
-import type { Secrets, Settings } from "./settings.ts";
-import type { Traffic } from "./traffic.ts";
+import { isLoopback } from "../auth/dashboard.ts";
+import type { Secrets, Settings } from "../settings.ts";
+import type { Traffic } from "../traffic.ts";
+import { childEnv } from "./env.ts";
 
 export const tunnelTokenSecret = "cloudflare.tunnelToken";
 const knownPaths = ["/opt/homebrew/bin/cloudflared", "/usr/local/bin/cloudflared", "/usr/bin/cloudflared"];
 const maxBackoffMs = 60_000;
 // A tunnel that ran this long before stopping starts again right away, not after the last crash's delay.
 const stableMs = 60_000;
+/**
+ * Waits before each check of a quick tunnel's address. The first wait gives Cloudflare time to publish the DNS
+ * record, since a lookup that comes too early is remembered as "no such name" for a minute or more.
+ */
+const checkDelays = [3_000, 3_000, 5_000, 5_000, 10_000];
+const checkLimitMs = 180_000;
+
+export type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
+
+/**
+ * Whether the address resolves in public DNS and an HTTPS request to it reaches this VM Bridge. DNS is asked over
+ * HTTPS, so a lookup before the record exists is never remembered by this machine's own resolver.
+ */
+export async function addressWorks(url: string, fetcher: Fetcher = fetch): Promise<boolean> {
+  try {
+    const name = new URL(url).hostname;
+    const dns = await fetcher(`https://cloudflare-dns.com/dns-query?name=${name}&type=A`, {
+      headers: { accept: "application/dns-json" },
+      signal: AbortSignal.timeout(5_000),
+    });
+    const lookup = (await dns.json()) as { Status?: number; Answer?: { type: number }[] };
+    // Status 0 is NOERROR, and type 1 an A record.
+    if (lookup.Status !== 0 || !lookup.Answer?.some((record) => record.type === 1)) return false;
+    // The login check is public and only VM Bridge answers it with this shape.
+    const response = await fetcher(`${url}/admin/api/auth`, { redirect: "manual", signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) return false;
+    const auth = (await response.json()) as { hasPassword?: unknown };
+    return typeof auth.hasPassword === "boolean";
+  } catch {
+    return false;
+  }
+}
+
+/** Checks the address until it works, it is no longer wanted, or the time limit passes. */
+export async function waitForAddress(
+  url: string,
+  wanted: () => boolean,
+  { fetcher = fetch, delays = checkDelays, limitMs = checkLimitMs }: { fetcher?: Fetcher; delays?: number[]; limitMs?: number } = {},
+): Promise<boolean> {
+  const deadline = Date.now() + limitMs;
+  for (let attempt = 0; ; attempt++) {
+    await Bun.sleep(delays[Math.min(attempt, delays.length - 1)] ?? 0);
+    if (!wanted()) return false;
+    if (await addressWorks(url, fetcher)) return true;
+    if (Date.now() >= deadline || !wanted()) return false;
+  }
+}
 
 export function findCloudflared(PATH = process.env.PATH ?? "", fallbacks = knownPaths): string | null {
   return Bun.which("cloudflared", { PATH }) ?? fallbacks.find((path) => existsSync(path)) ?? null;
@@ -58,20 +107,21 @@ export function namedTunnelConfig(options: { id: string; credentials: string; ho
   ].join("\n");
 }
 
-const isLoopback = (address: string) => /^(?:127\.|::ffff:127\.)/.test(address) || address === "::1";
-
 /**
  * Who sent a request, for login throttling, and whether it arrived over HTTPS, for the cookie's Secure flag.
  * Proxy headers are only believed from loopback: `cf-connecting-ip` on the listener only cloudflared is told about
- * (Cloudflare's edge sets it, replacing any the client sent), and `x-forwarded-proto` from a local proxy such as
- * `tailscale serve`. Anyone else could send either header to dodge throttling.
+ * (Cloudflare's edge sets it, replacing any the client sent), and `x-forwarded-proto` and `tailscale-user-login` from a
+ * local proxy such as `tailscale serve` on the main listener. Anyone else could send them to dodge throttling.
  */
 export function requestOrigin(request: Request, peer: string | undefined, viaTunnel: boolean): { address: string; secure: boolean } {
   const address = peer ?? "unknown";
   const local = isLoopback(address);
   const forwardedHttps = local && request.headers.get("x-forwarded-proto") === "https";
   if (viaTunnel && local) return { address: request.headers.get("cf-connecting-ip") ?? address, secure: forwardedHttps };
-  return { address, secure: new URL(request.url).protocol === "https:" || forwardedHttps };
+  // Every tailnet user arrives from loopback through `tailscale serve`, which names them (replacing any the client
+  // sent), so each gets their own throttle instead of sharing one. Tagged devices and Funnel get no name.
+  const login = local ? request.headers.get("tailscale-user-login") : null;
+  return { address: login ? `tailscale:${login}` : address, secure: new URL(request.url).protocol === "https:" || forwardedHttps };
 }
 
 export interface TunnelListener {
@@ -85,11 +135,13 @@ interface TunnelDeps {
   traffic: Traffic;
   /** Holds cloudflared's config, named tunnel credentials and pid file. */
   dir: string;
-  /** Opens the loopback listener cloudflared forwards to. Port 0 picks a free one. */
-  listen: (port: number) => TunnelListener;
+  /** Opens the loopback listener cloudflared forwards to, ready to serve. Port 0 picks a free one. */
+  listen: (port: number) => Promise<TunnelListener>;
   home?: string;
   PATH?: string;
   fallbacks?: string[];
+  /** Resolves true once a quick tunnel's address works. Tests replace the real network check. */
+  checkAddress?: (url: string, wanted: () => boolean) => Promise<boolean>;
 }
 
 class TunnelSetupError extends Error {}
@@ -98,11 +150,12 @@ class TunnelSetupError extends Error {}
  * Runs `cloudflared` as a child process while the tunnel is on: a quick tunnel without an account, a named tunnel
  * on the user's hostname when cloudflared is logged in, or a dashboard-made tunnel from its token. cloudflared
  * forwards to its own loopback listener, so requests through it are told apart from local ones. Restarts it with
- * backoff when it stops, and logs its output with tokens hidden.
+ * backoff when it stops, and logs its output with tokens hidden. A quick tunnel's address is only shown once it
+ * works, since devices that look it up too early cannot reach it for minutes.
  */
 export class CloudflareTunnel {
   private child: Subprocess<"ignore", "pipe", "pipe"> | null = null;
-  private listener: TunnelListener | null = null;
+  private listener: Promise<TunnelListener> | null = null;
   private state: CloudflareInfo["state"] = "off";
   private url: string | null = null;
   private error: string | null = null;
@@ -135,11 +188,12 @@ export class CloudflareTunnel {
       state: this.state,
       url: this.url,
       error: this.error,
-      port: this.listener?.port ?? port,
+      // Opening the listener saves its port.
+      port,
     };
   }
 
-  /** Resolves once the address is known or the tunnel failed or is off, or after `ms`. */
+  /** Resolves once the address works or the tunnel failed or is off, or after `ms`. */
   async ready(ms: number): Promise<void> {
     if (this.state !== "starting" || this.url) return;
     let done = () => {};
@@ -158,7 +212,10 @@ export class CloudflareTunnel {
     await this.halt();
     if (generation !== this.generation) return;
     this.killStale();
-    if (!enabled) return this.closeListener();
+    if (!enabled) {
+      this.removeNamed();
+      return this.closeListener();
+    }
     await this.launch(generation);
   }
 
@@ -187,7 +244,7 @@ export class CloudflareTunnel {
       const binary = this.binary();
       if (!binary) throw new TunnelSetupError("cloudflared is not installed.");
       mkdirSync(this.folder, { recursive: true, mode: 0o700 });
-      const port = this.openListener();
+      const port = (await this.openListener()).port!;
       const { hostname } = this.deps.settings.get("cloudflareTunnel");
       const args = await this.command(binary, port, hostname, token);
       if (generation !== this.generation) return;
@@ -197,10 +254,12 @@ export class CloudflareTunnel {
         stdout: "pipe",
         stderr: "pipe",
         // In the environment, not the arguments, so other users on this machine cannot read it from the process list.
-        env: token ? { ...process.env, TUNNEL_TOKEN: token } : { ...process.env, TUNNEL_TOKEN: undefined },
+        env: childEnv(token ? { TUNNEL_TOKEN: token } : {}),
       });
       this.child = child;
       let lastError: string | null = null;
+      let address: string | null = null;
+      let connected = false;
       const onLine = (line: string) => {
         const safe = redact(line, token ? [token] : []);
         // Its routine info lines would bury VM Bridge's own output. Warnings, errors and connections stay.
@@ -208,12 +267,11 @@ export class CloudflareTunnel {
         if (generation !== this.generation) return;
         const error = /(?:^|\s)(?:ERR|FTL)\s+(.*)$/.exec(safe)?.[1];
         if (error) lastError = error;
-        const quick = mode === "quick" ? quickTunnelUrl(safe) : null;
-        if (quick) this.update(this.state, quick, null);
-        if (safe.includes("Registered tunnel connection") && this.state !== "running") {
-          const url = mode === "quick" ? this.url : `https://${hostname}`;
-          this.update("running", url, null);
-          this.deps.traffic.record({ kind: "system", operation: "Cloudflare Tunnel connected", status: "ok" });
+        if (mode === "quick") address = quickTunnelUrl(safe) ?? address;
+        if (safe.includes("Registered tunnel connection") && !connected) {
+          connected = true;
+          if (mode !== "quick") this.running(`https://${hostname}`);
+          else if (address) void this.check(generation, child, address);
         }
       };
       // The reason it stopped is in its last lines, so read them all before handling the exit.
@@ -229,6 +287,28 @@ export class CloudflareTunnel {
       if (error instanceof TunnelSetupError) return this.update("failed", null, reason);
       this.failed(generation, reason, false);
     }
+  }
+
+  private running(url: string) {
+    this.update("running", url, null);
+    this.deps.traffic.record({ kind: "system", operation: "Cloudflare Tunnel connected", status: "ok" });
+  }
+
+  /** Shows a quick tunnel's address once it works. One that never does is a fresh start's to replace, not a retry's. */
+  private async check(generation: number, child: Subprocess, url: string) {
+    const wanted = () => generation === this.generation && this.child === child;
+    const works = await (this.deps.checkAddress ?? waitForAddress)(url, wanted);
+    if (!wanted()) return;
+    if (works) {
+      console.log(`Cloudflare Tunnel address works: ${url}`);
+      return this.running(url);
+    }
+    const reason = "The tunnel address did not start working. Turn the tunnel off and on to try a new one.";
+    this.deps.traffic.record({ kind: "system", operation: "Cloudflare Tunnel", status: "error", reason });
+    // A new generation, so cloudflared exiting below does not count as a crash to restart.
+    const stopped = ++this.generation;
+    await this.halt();
+    if (stopped === this.generation) this.update("failed", null, reason);
   }
 
   /** Records the failure and tries again later, waiting longer after each failure in a row. */
@@ -249,9 +329,11 @@ export class CloudflareTunnel {
   private async command(binary: string, port: number, hostname: string | null, token: string | undefined): Promise<string[]> {
     if (token) {
       if (!hostname) throw new TunnelSetupError("Add the hostname this tunnel serves.");
+      this.removeNamed();
       return ["run"];
     }
     if (!hostname) {
+      this.removeNamed();
       // Its own config, so a config.yml the user keeps in ~/.cloudflared for other tunnels does not apply here.
       const config = join(this.folder, "quick.yml");
       writeFileSync(config, "no-autoupdate: true\n");
@@ -269,6 +351,7 @@ export class CloudflareTunnel {
     } else if (!existsSync(credentials)) {
       await cloudflared(binary, ["tunnel", "token", "--credentials-file", credentials, id]);
     }
+    chmodSync(credentials, 0o600);
     // Without --overwrite-dns: a record the user already has for this hostname is theirs to remove.
     await cloudflared(binary, ["tunnel", "route", "dns", id, hostname]);
     const config = join(this.folder, "config.yml");
@@ -276,24 +359,41 @@ export class CloudflareTunnel {
     return ["--config", config, "run"];
   }
 
-  private openListener(): number {
-    if (this.listener?.port) return this.listener.port;
-    const saved = this.deps.settings.get("cloudflareTunnel");
-    try {
-      this.listener = this.deps.listen(saved.port ?? 0);
-    } catch {
-      // The saved port is taken. A dashboard-made tunnel then needs pointing at the new one, which Settings shows.
-      this.listener = this.deps.listen(0);
+  /**
+   * A named tunnel's credentials let whoever has them serve its hostname, so they are only kept while it is in use.
+   * Turning it on again fetches them again with `cloudflared tunnel token`.
+   */
+  private removeNamed() {
+    if (!existsSync(this.folder)) return;
+    for (const file of readdirSync(this.folder)) {
+      if (file === "config.yml" || /^vmbridge-.+\.json$/.test(file)) rmSync(join(this.folder, file), { force: true });
     }
-    const port = this.listener.port!;
-    if (port !== saved.port) this.deps.settings.set("cloudflareTunnel", { ...this.deps.settings.get("cloudflareTunnel"), port });
-    return port;
+  }
+
+  /** Opens the listener once. Launches while it opens, such as a retry, share it, so a second one is never left open. */
+  private openListener(): Promise<TunnelListener> {
+    if (this.listener) return this.listener;
+    const saved = this.deps.settings.get("cloudflareTunnel");
+    const opening = this.deps
+      .listen(saved.port ?? 0)
+      // The saved port is taken. A dashboard-made tunnel then needs pointing at the new one, which Settings shows.
+      .catch(() => this.deps.listen(0))
+      .then((listener) => {
+        if (listener.port !== saved.port) this.deps.settings.set("cloudflareTunnel", { ...this.deps.settings.get("cloudflareTunnel"), port: listener.port ?? null });
+        return listener;
+      });
+    // A listener that failed to open is tried again by the next launch.
+    opening.catch(() => {
+      if (this.listener === opening) this.listener = null;
+    });
+    this.listener = opening;
+    return opening;
   }
 
   private async closeListener() {
-    const listener = this.listener;
+    const opening = this.listener;
     this.listener = null;
-    await listener?.stop(true);
+    await opening?.then((listener) => listener.stop(true), () => {});
   }
 
   private async halt() {
@@ -316,7 +416,7 @@ export class CloudflareTunnel {
     const pid = Number(readFileSync(pidFile, "utf8").trim());
     rmSync(pidFile, { force: true });
     if (!Number.isInteger(pid) || pid <= 0) return;
-    const name = Bun.spawnSync(["ps", "-p", String(pid), "-o", "comm="]).stdout.toString().trim();
+    const name = Bun.spawnSync(["ps", "-p", String(pid), "-o", "comm="], { env: childEnv() }).stdout.toString().trim();
     if (!name.endsWith("cloudflared")) return;
     try {
       process.kill(pid, "SIGTERM");
@@ -338,7 +438,7 @@ async function readLines(stream: ReadableStream<Uint8Array>, onLine: (line: stri
 
 /** Runs a short cloudflared command and returns its output, or throws with its last error line. */
 async function cloudflared(binary: string, args: string[]): Promise<string> {
-  const child = Bun.spawn([binary, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 30_000 });
+  const child = Bun.spawn([binary, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 30_000, env: childEnv() });
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   if (code !== 0) throw new Error(redact(stderr.trim().split("\n").at(-1) || `cloudflared ${args[1]} failed.`));
   return stdout;

@@ -1,0 +1,4 @@
+# The dashboard password, at least 12 characters.
+VMBRIDGE_PASSWORD=
+# Encrypts saved keys and sign-ins: the output of `openssl rand -base64 32`, or a passphrase of at least 32 characters.
+VMBRIDGE_ENCRYPTION_KEY=

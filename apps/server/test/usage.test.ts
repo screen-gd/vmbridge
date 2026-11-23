@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { providerIds, vmSizes } from "@vmbridge/contracts";
-import { openDatabase } from "../src/db.ts";
+import { openDatabase } from "../src/bun/sqlite.ts";
 import { estimate, eurUsd, machine, pricing } from "../src/pricing.ts";
 import { Store } from "../src/store.ts";
 import { Usage } from "../src/usage.ts";
@@ -160,7 +160,7 @@ describe("snapshots", () => {
       ["s1", 0, 3 * hour],
       ["s2", 2 * hour, 4 * hour],
     ]);
-    expect(db.query("SELECT COUNT(*) AS count FROM snapshot_usage").get()).toEqual({ count: 2 });
+    expect(db.one("SELECT COUNT(*) AS count FROM snapshot_usage")).toEqual({ count: 2 });
   });
 
   test("a sleep checkpoint is kept until the VM wakes", () => {

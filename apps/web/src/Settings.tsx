@@ -3,7 +3,7 @@ import { parseAsStringLiteral, useQueryState } from "nuqs";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { toast } from "sonner";
 import { Add01Icon, CommandLineIcon, ComputerIcon, Delete02Icon, GitBranchIcon, GithubIcon, GlobalIcon, Key01Icon, UnfoldMoreIcon } from "@hugeicons/core-free-icons";
-import { machineNameMaxLength, vmSizes, type BridgeSettings, type CloudflareInfo, type NetworkInfo, type Overview, type ProviderId, type RepoRule, type VmSize } from "@vmbridge/contracts";
+import { machineNameMaxLength, vmSizes, type BridgeNetworkInfo, type BridgeSettings, type CloudflareInfo, type Overview, type ProviderId, type RepoRule, type VmSize } from "@vmbridge/contracts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -40,7 +40,7 @@ export function Settings({ overview, onLoggedOut }: { overview: Overview; onLogg
       {tab === "repos" && <RepoRules overview={overview} />}
       {tab === "env" && <Environment overview={overview} />}
       {tab === "addresses" && <Addresses />}
-      {tab === "password" && <Password onLoggedOut={onLoggedOut} />}
+      {tab === "password" && <Password source={overview.passwordSource} onLoggedOut={onLoggedOut} />}
     </Page>
   );
 }
@@ -293,10 +293,19 @@ function RepoRules({ overview }: { overview: Overview }) {
 }
 
 function Addresses() {
-  const [network, setNetwork] = useState<NetworkInfo | null>(null);
+  const [network, setNetwork] = useState<BridgeNetworkInfo | null>(null);
   const action = useAction();
-  useEffect(() => void action.run(async () => setNetwork(await api<NetworkInfo>("/network"))), []);
-  const tailscale = network?.tailscale;
+  useEffect(() => void action.run(async () => setNetwork(await api<BridgeNetworkInfo>("/network"))), []);
+  // On Cloudflare Workers the dashboard has only its own address: no local network, Tailscale or tunnel.
+  const local = network?.platform === "bun" ? network : null;
+  const cloudflare = local?.cloudflare;
+  // Until the tunnel works or gives up, check again every few seconds.
+  useEffect(() => {
+    if (!cloudflare?.enabled || cloudflare.state === "running") return;
+    const timer = setTimeout(() => void api<BridgeNetworkInfo>("/network").then(setNetwork, () => {}), 3_000);
+    return () => clearTimeout(timer);
+  }, [network]);
+  const tailscale = local?.tailscale;
   return (
     <>
       <Section title="Addresses">
@@ -304,7 +313,10 @@ function Addresses() {
           {network?.addresses.map((address) => (
             <Item key={address.url} variant="outline" size="sm">
               <ItemContent className="min-w-0">
-                <ItemTitle>{address.label}</ItemTitle>
+                <ItemTitle>
+                  {address.label}
+                  {address.kind === "cloudflare" && <TunnelBadge state="running" />}
+                </ItemTitle>
                 <ItemDescription className="truncate font-mono text-xs">
                   {address.url}
                 </ItemDescription>
@@ -314,9 +326,46 @@ function Addresses() {
               </ItemActions>
             </Item>
           ))}
+          {cloudflare?.enabled && !cloudflare.url && cloudflare.state !== "off" && (
+            <Item variant="outline" size="sm">
+              <ItemContent className="min-w-0">
+                <ItemTitle>
+                  Cloudflare Tunnel
+                  <TunnelBadge state={cloudflare.state} />
+                </ItemTitle>
+                <ItemDescription>{cloudflare.state === "failed" ? cloudflare.error : gettingReady}</ItemDescription>
+              </ItemContent>
+            </Item>
+          )}
         </ItemGroup>
       </Section>
-      {network && (
+      {local && (
+        <Section title="Local network" actions={<Badge variant="secondary">{local.localNetwork.enabled ? "On" : "Off"}</Badge>}>
+          <Item variant="outline">
+            <ItemContent>
+              <ItemTitle>
+                <label htmlFor="local-network">Devices on this network</label>
+              </ItemTitle>
+              <ItemDescription>
+                {local.localNetwork.fixed
+                  ? "Set by --host when VM Bridge started."
+                  : local.localNetwork.enabled
+                    ? "They can connect over plain HTTP, which others on this Wi-Fi can read."
+                    : "Off, so they can't connect. Tailscale and Cloudflare Tunnel still work."}
+              </ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <Switch
+                id="local-network"
+                checked={local.localNetwork.enabled}
+                disabled={action.busy || local.localNetwork.fixed}
+                onCheckedChange={(enabled) => void action.run(async () => setNetwork(await api<BridgeNetworkInfo>("/network/local", { body: { enabled } })))}
+              />
+            </ItemActions>
+          </Item>
+        </Section>
+      )}
+      {local && (
         <Section title="Tailscale" actions={<Badge variant="secondary">{tailscale?.running ? "Connected" : tailscale?.installed ? "Not connected" : "Not installed"}</Badge>}>
           {tailscale?.running ? (
             <Item variant="outline">
@@ -331,7 +380,7 @@ function Addresses() {
                   id="tailscale-https"
                   checked={Boolean(tailscale.httpsUrl)}
                   disabled={action.busy}
-                  onCheckedChange={(enabled) => void action.run(async () => setNetwork(await api<NetworkInfo>("/network/https", { body: { enabled } })))}
+                  onCheckedChange={(enabled) => void action.run(async () => setNetwork(await api<BridgeNetworkInfo>("/network/https", { body: { enabled } })))}
                 />
               </ItemActions>
             </Item>
@@ -343,20 +392,30 @@ function Addresses() {
         </Section>
       )}
       {action.error && <FieldError>{action.error}</FieldError>}
-      {network && <CloudflareTunnel info={network.cloudflare} onChange={setNetwork} />}
+      {local && <CloudflareTunnel info={local.cloudflare} onChange={setNetwork} />}
     </>
   );
 }
 
-const tunnelBadge: Record<CloudflareInfo["state"], string> = { off: "Off", starting: "Starting", running: "On", failed: "Not working" };
+const gettingReady = "Getting the address ready, this can take up to a minute.";
+const tunnelStatus: Record<CloudflareInfo["state"], string> = { off: "Off", starting: "Getting ready", running: "Working", failed: "Not working" };
 
-function CloudflareTunnel({ info, onChange }: { info: CloudflareInfo; onChange: (network: NetworkInfo) => void }) {
+function TunnelBadge({ state }: { state: CloudflareInfo["state"] }) {
+  return (
+    <Badge variant={state === "failed" ? "destructive" : "secondary"} className="gap-1.5">
+      {state === "running" && <span className="size-1.5 rounded-full bg-success" />}
+      {tunnelStatus[state]}
+    </Badge>
+  );
+}
+
+function CloudflareTunnel({ info, onChange }: { info: CloudflareInfo; onChange: (network: BridgeNetworkInfo) => void }) {
   const [hostname, setHostname] = useState(info.hostname ?? "");
   const [token, setToken] = useState("");
   const action = useAction();
   const save = (body: { enabled?: boolean; hostname?: string; token?: string | null }) =>
     void action.run(async () => {
-      onChange(await api<NetworkInfo>("/network/cloudflare", { body }));
+      onChange(await api<BridgeNetworkInfo>("/network/cloudflare", { body }));
       setToken("");
     });
 
@@ -370,9 +429,9 @@ function CloudflareTunnel({ info, onChange }: { info: CloudflareInfo; onChange: 
     );
   }
 
-  const status = info.url ?? (info.state === "starting" ? "Starting..." : "Opens VM Bridge to the internet, behind your password.");
+  const status = info.url ?? (info.enabled && info.state === "starting" ? gettingReady : "Opens VM Bridge to the internet, behind your password.");
   return (
-    <Section title="Cloudflare Tunnel" actions={<Badge variant="secondary">{info.enabled ? tunnelBadge[info.state] : "Off"}</Badge>}>
+    <Section title="Cloudflare Tunnel" actions={<TunnelBadge state={info.enabled ? info.state : "off"} />}>
       <Item variant="outline">
         <ItemContent className="min-w-0">
           <ItemTitle>
@@ -431,10 +490,25 @@ function CloudflareTunnel({ info, onChange }: { info: CloudflareInfo; onChange: 
   );
 }
 
-function Password({ onLoggedOut }: { onLoggedOut: () => void }) {
+function Password({ source, onLoggedOut }: { source: string | null; onLoggedOut: () => void }) {
   const [current, setCurrent] = useState("");
   const [password, setPassword] = useState("");
   const action = useAction();
+  const logOut = () => void api("/logout", { body: {} }).finally(onLoggedOut);
+  if (source) {
+    return (
+      <Section title="Password">
+        <div className="flex flex-col gap-4">
+          <p className="text-[13px] text-muted-foreground">Change it in {source}. That logs out every browser.</p>
+          <div>
+            <Button type="button" variant="outline" size="lg" className="px-4" onClick={logOut}>
+              Log out
+            </Button>
+          </div>
+        </div>
+      </Section>
+    );
+  }
   return (
     <Section title="Password">
       <form
@@ -458,7 +532,7 @@ function Password({ onLoggedOut }: { onLoggedOut: () => void }) {
           <Button type="submit" size="lg" className="px-4" disabled={action.busy || !current || password.length < 8}>
             Change password
           </Button>
-          <Button type="button" variant="outline" size="lg" className="px-4" onClick={() => void api("/logout", { body: {} }).finally(onLoggedOut)}>
+          <Button type="button" variant="outline" size="lg" className="px-4" onClick={logOut}>
             Log out
           </Button>
         </div>

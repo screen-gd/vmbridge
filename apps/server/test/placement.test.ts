@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDatabase } from "../src/db.ts";
+import { openSocket } from "../src/bun/socket.ts";
+import { openDatabase } from "../src/bun/sqlite.ts";
 import { Fleet } from "../src/fleet.ts";
 import { busyNotice, choose, type VmLoad } from "../src/placement.ts";
 import { Secrets, Settings } from "../src/settings.ts";
@@ -16,7 +17,7 @@ function setup() {
   settings.set("providers", ["boxd", "railway"]);
   settings.set("defaultProvider", "boxd");
   settings.set("vmSize", "medium");
-  const fleet = new Fleet(new Store(db, testEncryption), settings, new Secrets(db, testEncryption), { record: () => {} } as unknown as Traffic, {} as never, {} as never);
+  const fleet = new Fleet(new Store(db, testEncryption), settings, new Secrets(db, testEncryption), { record: () => {} } as unknown as Traffic, {} as never, {} as never, openSocket);
   return { settings, fleet };
 }
 
@@ -88,18 +89,19 @@ describe("upgrading a database from one VM per project", () => {
     const dir = mkdtempSync(join(tmpdir(), "vmbridge-migration-"));
     try {
       const path = join(dir, "main.db");
-      // Back to the schema before project_vms, with a project on a VM as that version stored it.
+      // Back to the schema before project_vms, tracked by user_version, with a project on a VM as that version stored it.
       const old = openDatabase(path);
-      old.run("DROP TABLE project_vms; DROP TABLE base_snapshots; DROP TABLE retired_snapshots; DROP TABLE errors; DROP TABLE vm_usage; DROP TABLE snapshot_usage; DROP TABLE vm_events; DROP TABLE turns; PRAGMA user_version = 5;");
+      old.exec("DROP TABLE project_vms; DROP TABLE base_snapshots; DROP TABLE retired_snapshots; DROP TABLE errors; DROP TABLE vm_usage; DROP TABLE snapshot_usage; DROP TABLE vm_events; DROP TABLE turns; DROP TABLE agent_profiles; DROP TABLE instructions; DROP TABLE migrations; PRAGMA user_version = 5;");
       old.run("INSERT INTO vms (id, provider, name, size, state, created_at) VALUES ('vm1', 'boxd', 'vm1', 'medium', 'sleeping', 0)");
       old.run("INSERT INTO projects (id, url, title, vm_id, checkout_path, created_at) VALUES ('p1', 'https://github.com/acme/app.git', 'app', 'vm1', '/workspace/app', 0)");
       old.run("INSERT INTO projects (id, url, title, created_at) VALUES ('p2', 'https://github.com/acme/web.git', 'web', 1)");
       old.close();
 
-      const store = new Store(openDatabase(path), testEncryption);
+      const db = openDatabase(path);
+      const store = new Store(db, testEncryption);
       expect(store.project("p1")?.vms).toEqual([{ vmId: "vm1", checkoutPath: "/workspace/app" }]);
       expect(store.project("p2")?.vms).toEqual([]);
-      store.db.close();
+      db.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

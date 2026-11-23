@@ -508,7 +508,7 @@ export class Rpc {
       });
     };
     const sleepingSnapshot = () => {
-      const projection = this.hub.sleepingProjection(threadId);
+      const projection = this.hub.sleepingProjection(threadId, vmId);
       if (!projection) return false;
       this.chunk(call, { kind: "snapshot", snapshotSequence: this.hub.shellSequence(vmId), projection: this.hub.out(projection, vmId) });
       return true;
@@ -562,7 +562,7 @@ export class Rpc {
 
     const awake = Boolean(this.hub.fleet.backend(vmId));
     if (!mutating && !awake) {
-      const cached = tag === "orchestration.getThreadProjection" ? this.hub.store.projection(String(payload.threadId)) : null;
+      const cached = tag === "orchestration.getThreadProjection" ? this.hub.store.projection(String(payload.threadId), vmId) : null;
       if (cached) return this.reply(call, this.hub.out(cached, vmId));
       throw new Error("This VM is asleep. Sending a message wakes it.");
     }

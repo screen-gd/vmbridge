@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { Sql } from "./sql.ts";
 import type { ProviderId, TrafficEvent } from "@vmbridge/contracts";
 
 type Listener = (event: TrafficEvent) => void;
@@ -7,6 +7,11 @@ type Listener = (event: TrafficEvent) => void;
 export const keptErrors = 200;
 /** How long a failure nothing has put right flags its VM or provider in the dashboard. */
 export const problemMs = 24 * 60 * 60_000;
+/** How often requests without a device session show up in the log, as one entry with their count. */
+export const refusedWindowMs = 10_000;
+const keptRequests = 500;
+const keptEvents = 300;
+const operationLength = 200;
 
 interface ErrorRow {
   at: number;
@@ -23,19 +28,23 @@ interface ErrorRow {
  *
  * Provider and system failures also go to the console and, with a database, to the `errors` table, so background
  * failures (a VM or snapshot that could not be deleted, a failed sleep) survive a restart and flag their VM or provider.
+ *
+ * RPC and HTTP requests are kept apart from provider and system events, so a burst of requests cannot push startup,
+ * pairing or a failure out of the log.
  */
 export class Traffic {
   private nextId = 1;
   private readonly listeners = new Set<Listener>();
-  readonly recent: TrafficEvent[] = [];
+  private readonly requests: TrafficEvent[] = [];
+  private readonly events: TrafficEvent[] = [];
+  private refusedCount = 0;
+  private refusedTimer?: ReturnType<typeof setTimeout>;
 
-  constructor(private readonly db?: Database) {
+  constructor(private readonly db?: Sql) {
     if (!db) return;
-    const rows = db
-      .query<ErrorRow, []>("SELECT at, kind, operation, reason, vm_id AS vmId, provider FROM errors ORDER BY id")
-      .all();
+    const rows = db.all<ErrorRow>("SELECT at, kind, operation, reason, vm_id AS vmId, provider FROM errors ORDER BY id");
     for (const row of rows) {
-      this.recent.push({
+      this.events.push({
         id: this.nextId++,
         at: row.at,
         kind: row.kind,
@@ -48,14 +57,37 @@ export class Traffic {
     }
   }
 
+  /** Oldest first. */
+  get recent(): TrafficEvent[] {
+    return [...this.events, ...this.requests].sort((a, b) => a.id - b.id);
+  }
+
   record(event: Omit<TrafficEvent, "id" | "at">): void {
-    const entry: TrafficEvent = { ...event, id: this.nextId++, at: Date.now() };
+    const entry: TrafficEvent = { ...event, id: this.nextId++, at: Date.now(), operation: event.operation.slice(0, operationLength) };
     // Short enough to show next to a VM or provider.
     if (entry.reason) entry.reason = entry.reason.trim().split("\n")[0]!.slice(0, 300);
-    this.recent.push(entry);
-    if (this.recent.length > 500) this.recent.shift();
+    const request = entry.kind === "rpc" || entry.kind === "http";
+    const list = request ? this.requests : this.events;
+    list.push(entry);
+    if (list.length > (request ? keptRequests : keptEvents)) list.shift();
     if (entry.kind === "provider" || entry.kind === "system") this.keep(entry);
     for (const listener of this.listeners) listener(entry);
+  }
+
+  /**
+   * A request without a device session. Anyone who can reach VM Bridge can send these, so they are only counted and
+   * logged, and pushed to the dashboard, as one entry per `refusedWindowMs`.
+   */
+  refused(): void {
+    this.refusedCount++;
+    if (this.refusedTimer) return;
+    this.refusedTimer = setTimeout(() => {
+      const count = this.refusedCount;
+      this.refusedCount = 0;
+      this.refusedTimer = undefined;
+      this.record({ kind: "http", operation: `Refused ${count} ${count === 1 ? "request" : "requests"} without a device session`, status: "error" });
+    }, refusedWindowMs);
+    this.refusedTimer.unref?.();
   }
 
   subscribe(listener: Listener): () => void {
@@ -73,11 +105,10 @@ export class Traffic {
     const vms = new Map<string, string>();
     const providers = new Map<ProviderId, string>();
     if (!this.db) return { vms, providers };
-    const rows = this.db
-      .query<ErrorRow, [number]>(
-        "SELECT at, kind, operation, reason, vm_id AS vmId, provider FROM errors WHERE resolved = 0 AND kind = 'provider' AND at >= ? ORDER BY id",
-      )
-      .all(now - problemMs);
+    const rows = this.db.all<ErrorRow>(
+      "SELECT at, kind, operation, reason, vm_id AS vmId, provider FROM errors WHERE resolved = 0 AND kind = 'provider' AND at >= ? ORDER BY id",
+      now - problemMs,
+    );
     for (const row of rows) {
       if (/^build \w+ base snapshot$/.test(row.operation)) continue;
       const text = `${row.operation[0]?.toUpperCase() ?? ""}${row.operation.slice(1)} failed${row.reason ? `: ${row.reason}` : ""}`;
@@ -92,18 +123,18 @@ export class Traffic {
       const subject = entry.vmId ? ` (VM ${entry.vmId})` : entry.provider ? ` (${entry.provider})` : "";
       console.error(`[error] ${entry.operation}${entry.reason ? `: ${entry.reason}` : ""}${subject}`);
       if (!this.db) return;
-      this.db
-        .query("INSERT INTO errors (at, kind, operation, reason, vm_id, provider) VALUES (?, ?, ?, ?, ?, ?)")
-        .run(entry.at, entry.kind, entry.operation, entry.reason ?? null, entry.vmId ?? null, entry.provider ?? null);
-      this.db.query("DELETE FROM errors WHERE id <= (SELECT MAX(id) FROM errors) - ?").run(keptErrors);
+      this.db.run(
+        "INSERT INTO errors (at, kind, operation, reason, vm_id, provider) VALUES (?, ?, ?, ?, ?, ?)",
+        entry.at, entry.kind, entry.operation, entry.reason ?? null, entry.vmId ?? null, entry.provider ?? null,
+      );
+      this.db.run("DELETE FROM errors WHERE id <= (SELECT MAX(id) FROM errors) - ?", keptErrors);
       return;
     }
     // The same operation working again for the same VM, or for the provider as a whole, puts its failures right.
     if (!this.db || entry.status !== "ok" || (!entry.vmId && !entry.provider)) return;
-    this.db
-      .query(
-        "UPDATE errors SET resolved = 1 WHERE resolved = 0 AND operation = ?1 AND (vm_id = ?2 OR (?2 IS NULL AND provider = ?3))",
-      )
-      .run(entry.operation, entry.vmId ?? null, entry.provider ?? null);
+    this.db.run(
+      "UPDATE errors SET resolved = 1 WHERE resolved = 0 AND operation = ?1 AND (vm_id = ?2 OR (?2 IS NULL AND provider = ?3))",
+      entry.operation, entry.vmId ?? null, entry.provider ?? null,
+    );
   }
 }

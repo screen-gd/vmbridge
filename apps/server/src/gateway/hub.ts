@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import { EventEmitter, once } from "node:events";
 import { providers } from "../providers/index.ts";
 import { mayBeAwake, message, type Fleet } from "../fleet.ts";
 import { labelVcpus, type VmLoad } from "../placement.ts";
 import type { Settings } from "../settings.ts";
+import { sleep } from "../runtime.ts";
 import { primaryVm, type ProjectRow, type Store, type VmRow } from "../store.ts";
 import type { Traffic } from "../traffic.ts";
 import { T3Rejected, type Backend, type Frame } from "../vm/backend.ts";
@@ -58,7 +60,7 @@ export const bridgeAuth = {
   sessionCookieName: "vmbridge_t3_session",
 };
 
-const sha256 = (value: string) => new Bun.CryptoHasher("sha256").update(value).digest("hex");
+const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** How long a thread just placed on a VM counts toward its load before T3 lists it. */
 const launchGraceMs = 2 * 60_000;
@@ -96,6 +98,8 @@ export class Hub extends EventEmitter<HubEvents> {
   private readonly agentUpdates = new Map<string, Wire>();
   /** VMs an agent update woke, so they go back to sleep after it, even when updates overlap. */
   private readonly wokenForUpdate = new Set<string>();
+  /** Threads a VM reported that belong to another VM, logged once each. */
+  private readonly refusedClaims = new Set<string>();
   private sequence: number;
 
   constructor(
@@ -107,7 +111,7 @@ export class Hub extends EventEmitter<HubEvents> {
   ) {
     super();
     this.setMaxListeners(0);
-    this.shells = store.snapshots<Shell>("shell");
+    this.shells = new Map([...store.snapshots<Shell>("shell")].map(([vmId, shell]) => [vmId, this.owned(vmId, shell)]));
     this.configs = store.snapshots<ServerConfig>("config");
     const fallback = settings.get("fallbackConfig");
     if (fallback && !this.configs.size) this.configs.set(fallback.vmId, fallback.config);
@@ -220,14 +224,15 @@ export class Hub extends EventEmitter<HubEvents> {
       } else return;
       if (typeof item.sequence === "number") shell.snapshotSequence = item.sequence;
     }
-    const shell = this.shells.get(vmId)!;
+    const shell = this.owned(vmId, this.shells.get(vmId)!);
+    this.shells.set(vmId, shell);
     // Commands VM Bridge applied while the VM was away stay visible until the VM has replayed them.
     for (const held of this.store.heldCommands(vmId)) applyHeldCommand(shell, held.payload, new Date(held.createdAt).toISOString());
-    for (const thread of threadsOf(shell)) this.store.setThreadVm(thread.id, vmId);
     this.store.saveSnapshot(vmId, "shell", shell);
-    if (item.kind === "thread.updated" && item.thread) this.recordTurn(vmId, item.thread);
+    const updated = item.kind === "thread.updated" && item.thread && this.store.threadVm(item.thread.id) === vmId ? item.thread : undefined;
+    if (updated) this.recordTurn(vmId, updated);
     else if (item.kind === "snapshot" && !enrichment) for (const thread of threadsOf(shell)) this.recordTurn(vmId, thread);
-    if (item.kind === "thread.updated" && item.thread) this.refreshProjectionSoon(vmId, item.thread.id);
+    if (updated) this.refreshProjectionSoon(vmId, updated.id);
     if (item.kind === "snapshot" && !enrichment) void this.cacheMissingProjections(vmId);
     const working = hasLiveWork(shell);
     if (working) this.fleet.touch(vmId);
@@ -256,6 +261,25 @@ export class Hub extends EventEmitter<HubEvents> {
       agent: str(thread.providerInstanceId) ?? str(model?.provider) ?? null,
       model: str(model?.model) ?? null,
     });
+  }
+
+  /**
+   * A VM's shell without the threads another VM holds. A VM gets the threads no VM has yet, such as children it
+   * started itself, but only VM Bridge's placement gives it one another VM has: a VM cannot take over others' threads.
+   */
+  private owned(vmId: string, shell: Shell): Shell {
+    const mine = (row: Row) => {
+      if (this.store.claimThread(row.id, vmId)) return true;
+      const key = `${vmId}:${row.id}`;
+      if (!this.refusedClaims.has(key)) {
+        this.refusedClaims.add(key);
+        console.warn(`[hub] ignored thread ${row.id} from VM ${vmId}: it is on VM ${this.store.threadVm(row.id)}`);
+      }
+      return false;
+    };
+    const threads = shell.threads?.filter(mine);
+    const archivedThreads = shell.archivedThreads?.filter(mine);
+    return { ...shell, ...(threads && { threads }), ...(archivedThreads && { archivedThreads }) };
   }
 
   /**
@@ -318,12 +342,16 @@ export class Hub extends EventEmitter<HubEvents> {
 
   /** The merged shell: every registered project, then each VM's threads. */
   shell(): Shell {
-    const projects: Row[] = this.projects().map((project) => this.catalogProject(project));
+    const registered = this.projects();
+    const projects: Row[] = registered.map((project) => this.catalogProject(project));
     const threads: Row[] = [];
     const archivedThreads: Row[] = [];
     for (const [vmId, shell] of this.shells) {
       if (this.store.vm(vmId)?.state === "gone") continue;
       for (const project of (this.out(shell.projects ?? [], vmId) as Row[])) {
+        // Only a VM holding a registered project may add to its row.
+        const known = registered.find((entry) => entry.id === project.id);
+        if (known && !known.vms.some((entry) => entry.vmId === vmId)) continue;
         const index = projects.findIndex((existing) => existing.id === project.id);
         if (index < 0) projects.push(project);
         else {
@@ -890,8 +918,8 @@ export class Hub extends EventEmitter<HubEvents> {
   }
 
   /** The cached projection of a thread on a sleeping VM, with the waking notice when one is showing. */
-  sleepingProjection(threadId: string): Projection | null {
-    const projection = this.store.projection<Projection>(threadId);
+  sleepingProjection(threadId: string, vmId: string): Projection | null {
+    const projection = this.store.projection<Projection>(threadId, vmId);
     const wake = this.waking.get(threadId);
     if (!projection || !wake) return projection;
     const turnItems = projection.turnItems ?? [];
@@ -929,9 +957,10 @@ export class Hub extends EventEmitter<HubEvents> {
     return this.shells.get(vmId)?.snapshotSequence ?? 0;
   }
 
+  /** Saves a thread's projection, only from the VM holding the thread. */
   cacheProjection(threadId: string, vmId: string, projection: unknown) {
     const value = projection as Projection | null;
-    if (value?.thread?.id !== threadId) return;
+    if (value?.thread?.id !== threadId || this.store.threadVm(threadId) !== vmId) return;
     this.store.saveProjection(threadId, vmId, value.updatedAt ?? null, value);
   }
 
@@ -954,7 +983,7 @@ export class Hub extends EventEmitter<HubEvents> {
     if (!backend) return;
     for (const thread of threadsOf(this.shells.get(vmId))) {
       if (this.fleet.backend(vmId) !== backend) return;
-      if (this.store.hasProjection(thread.id)) continue;
+      if (this.store.hasProjection(thread.id, vmId)) continue;
       try {
         this.cacheProjection(thread.id, vmId, await backend.call("orchestration.getThreadProjection", { threadId: thread.id }));
       } catch {
@@ -1020,7 +1049,7 @@ export class Hub extends EventEmitter<HubEvents> {
         await this.sleepVm(vmId, shell);
       }),
     ).catch(() => {});
-    await Promise.race([sleeping, Bun.sleep(timeoutMs)]);
+    await Promise.race([sleeping, sleep(timeoutMs)]);
   }
 
   /**
@@ -1050,9 +1079,8 @@ export class Hub extends EventEmitter<HubEvents> {
     if (!shell || hasLiveWork(shell) || this.fleet.leased(vmId)) return;
     await this.fleet
       .sleep(vmId, async (live) => {
-        for (const thread of threadsOf(shell)) {
+        for (const thread of threadsOf(this.owned(vmId, shell))) {
           this.cacheProjection(thread.id, vmId, await live.call("orchestration.getThreadProjection", { threadId: thread.id }));
-          this.store.setThreadVm(thread.id, vmId);
         }
         // Its branches too, so the project's branch list and placement still know them while it sleeps.
         for (const project of this.store.projects()) {
@@ -1061,8 +1089,9 @@ export class Hub extends EventEmitter<HubEvents> {
         // Caching took a while: work may have started on the VM meanwhile.
         const latest = await live.json<Shell>("/api/orchestration/shell");
         if (hasLiveWork(latest)) return false;
-        this.shells.set(vmId, latest);
-        this.store.saveSnapshot(vmId, "shell", latest);
+        const own = this.owned(vmId, latest);
+        this.shells.set(vmId, own);
+        this.store.saveSnapshot(vmId, "shell", own);
         return true;
       })
       .catch(() => {});

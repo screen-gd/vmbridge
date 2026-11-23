@@ -1,0 +1,21 @@
+// VM Bridge on Cloudflare Workers. `bun run build` makes dist/assets, then `wrangler deploy` uploads the Worker, its
+// Durable Object and the dashboard's files. See docs/cloudflare.md.
+{
+  "name": "vmbridge",
+  "main": "apps/server/src/workers/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "dist/assets",
+    "binding": "ASSETS",
+    // Exact paths only: the Worker serves /dashboard itself, with the security headers.
+    "html_handling": "none",
+    "not_found_handling": "none",
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "BRIDGE", "class_name": "BridgeObject" }],
+  },
+  // SQLite-backed, the only kind the free plan has.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BridgeObject"] }],
+  "observability": { "enabled": true },
+}

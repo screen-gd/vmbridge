@@ -24,7 +24,7 @@ export function Environment({ overview }: { overview: Overview }) {
   const pending = overview.vms.filter((vm) => vm.updatePending).length;
 
   const remove = (target: string) =>
-    void action.run(() => api(`/env/${encodeURIComponent(target)}`, { method: "DELETE" })).then((ok) => ok && toast.success(`${target} removed.`));
+    void action.run(() => api(`/env/${encodeURIComponent(target)}`, { method: "DELETE" })).then((ok) => ok && toast.success(`${target} removed. If it was a secret, revoke it at its source too.`));
 
   return (
     <Section title="Environment variables" actions={overview.env.length > 0 && <Badge variant="secondary">{overview.env.length}</Badge>}>

@@ -34,6 +34,19 @@ export async function api<T>(path: string, options: { method?: string; body?: un
 
 const trafficLimit = 300;
 
+/** The latest `trafficLimit` requests and as many other events, so a burst of requests cannot hide startup or a failure. */
+function trimTraffic(events: TrafficEvent[]) {
+  let requests = 0;
+  let others = 0;
+  const kept: TrafficEvent[] = [];
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    const count = event.kind === "rpc" || event.kind === "http" ? ++requests : ++others;
+    if (count <= trafficLimit) kept.push(event);
+  }
+  return kept.reverse();
+}
+
 /** The live overview and recent traffic, from the server's event stream. */
 export function useLive() {
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -45,7 +58,7 @@ export function useLive() {
     let streaming = false;
     // Cloudflare's quick tunnels hold event streams back, so until the stream delivers, read the same data every few seconds.
     const loadTraffic = (onlyWhileWaiting: boolean) =>
-      void api<TrafficEvent[]>("/traffic").then((recent) => !cancelled && !(onlyWhileWaiting && streaming) && setTraffic(recent.slice(-trafficLimit)), () => {});
+      void api<TrafficEvent[]>("/traffic").then((recent) => !cancelled && !(onlyWhileWaiting && streaming) && setTraffic(trimTraffic(recent)), () => {});
     const loadOverview = () => void api<Overview>("/overview").then((next) => !cancelled && !streaming && setOverview(next), () => {});
     loadTraffic(false);
     loadOverview();
@@ -71,7 +84,7 @@ export function useLive() {
       clearInterval(polling);
       const live = JSON.parse(event.data as string) as LiveMessage;
       if (live.type === "overview") setOverview(live.overview);
-      else setTraffic((current) => [...current.slice(-(trafficLimit - 1)), live.event]);
+      else setTraffic((current) => trimTraffic([...current, live.event]));
     };
     return () => {
       cancelled = true;

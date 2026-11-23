@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { Sql } from "./sql.ts";
 import { providerIds, type Estimate, type ProviderId, type SnapshotUsage, type UsageReport, type VmSize } from "@vmbridge/contracts";
 import { githubName } from "./gateway/repos.ts";
 import { mayBeAwake } from "./fleet.ts";
@@ -61,8 +61,6 @@ const spanKey = (provider: string, snapshot: string) => `${provider}\n${snapshot
  * snapshots stay open across restarts: the provider keeps them, and bills them, while VM Bridge is down.
  */
 export class Usage {
-  private timer?: ReturnType<typeof setInterval>;
-
   constructor(
     private readonly store: Store,
     /** IDs of the VMs connected now. */
@@ -71,26 +69,19 @@ export class Usage {
     this.endAwake();
   }
 
-  private get db(): Database {
+  private get db(): Sql {
     return this.store.db;
-  }
-
-  /** Saves open intervals every `heartbeatMs`. */
-  start() {
-    this.timer ??= setInterval(() => this.sync(Date.now(), true), heartbeatMs);
   }
 
   /** For VM Bridge stopping: awake intervals end now, since VM Bridge no longer knows. */
   close(now = Date.now()) {
-    clearInterval(this.timer);
-    this.timer = undefined;
     this.sync(now, true);
     this.endAwake(now);
   }
 
   private endAwake(now?: number) {
     if (now === undefined) this.db.run("UPDATE vm_usage SET open = 0 WHERE open = 1 AND state = 'awake'");
-    else this.db.query("UPDATE vm_usage SET open = 0, ended_at = ? WHERE open = 1 AND state = 'awake'").run(now);
+    else this.db.run("UPDATE vm_usage SET open = 0, ended_at = ? WHERE open = 1 AND state = 'awake'", now);
   }
 
   /** Opens and closes intervals to match the fleet now. `heartbeat` also saves `now` on the ones still open. */
@@ -108,43 +99,40 @@ export class Usage {
     }
 
     this.db.transaction(() => {
-      const open = this.db
-        .query<OpenInterval, []>("SELECT id, vm_id AS vmId, state, repos FROM vm_usage WHERE open = 1")
-        .all();
+      const open = this.db.all<OpenInterval>("SELECT id, vm_id AS vmId, state, repos FROM vm_usage WHERE open = 1");
       for (const row of open) {
         const next = wanted.get(row.vmId);
         // A project added during the interval counts for all of it.
         const known: string[] = JSON.parse(row.repos);
         const repos = [...new Set([...known, ...(next?.repos ?? [])])];
-        if (repos.length !== known.length) this.db.query("UPDATE vm_usage SET repos = ? WHERE id = ?").run(JSON.stringify(repos), row.id);
+        if (repos.length !== known.length) this.db.run("UPDATE vm_usage SET repos = ? WHERE id = ?", JSON.stringify(repos), row.id);
         if (next?.state !== row.state) {
-          this.db.query("UPDATE vm_usage SET ended_at = ?, open = 0 WHERE id = ?").run(now, row.id);
+          this.db.run("UPDATE vm_usage SET ended_at = ?, open = 0 WHERE id = ?", now, row.id);
           continue;
         }
         wanted.delete(row.vmId);
-        if (heartbeat) this.db.query("UPDATE vm_usage SET ended_at = ? WHERE id = ?").run(now, row.id);
+        if (heartbeat) this.db.run("UPDATE vm_usage SET ended_at = ? WHERE id = ?", now, row.id);
       }
       for (const [vmId, next] of wanted) {
-        this.db
-          .query("INSERT INTO vm_usage (vm_id, name, provider, size, state, repos, started_at, ended_at, open) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)")
-          .run(vmId, next.name, next.provider, next.size, next.state, JSON.stringify(next.repos), now, now);
+        this.db.run(
+          "INSERT INTO vm_usage (vm_id, name, provider, size, state, repos, started_at, ended_at, open) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
+          vmId, next.name, next.provider, next.size, next.state, JSON.stringify(next.repos), now, now,
+        );
       }
       this.syncSnapshots(now, heartbeat);
-    })();
+    });
   }
 
   /** Snapshots on record now: base snapshots, replaced ones not deleted yet, and checkpoints of sleeping VMs. */
   private syncSnapshots(now: number, heartbeat: boolean) {
     const live = new Map<string, Omit<SnapshotSpan, "endedAt">>();
-    const bases = this.db
-      .query<{ provider: ProviderId; size: VmSize; snapshot: string; createdAt: number | null }, []>(
-        "SELECT provider, size, snapshot, created_at AS createdAt FROM base_snapshots WHERE snapshot IS NOT NULL",
-      )
-      .all();
+    const bases = this.db.all<{ provider: ProviderId; size: VmSize; snapshot: string; createdAt: number | null }>(
+      "SELECT provider, size, snapshot, created_at AS createdAt FROM base_snapshots WHERE snapshot IS NOT NULL",
+    );
     for (const base of bases) {
       live.set(spanKey(base.provider, base.snapshot), { provider: base.provider, kind: "base", snapshot: base.snapshot, size: base.size, vmId: null, startedAt: Math.min(base.createdAt ?? now, now) });
     }
-    const retired = this.db.query<{ provider: ProviderId; snapshot: string }, []>("SELECT provider, snapshot FROM retired_snapshots").all();
+    const retired = this.db.all<{ provider: ProviderId; snapshot: string }>("SELECT provider, snapshot FROM retired_snapshots");
     for (const { provider, snapshot } of retired) {
       const key = spanKey(provider, snapshot);
       if (!live.has(key)) live.set(key, { provider, kind: "base", snapshot, size: null, vmId: null, startedAt: now });
@@ -153,28 +141,28 @@ export class Usage {
       if (vm.checkpoint) live.set(spanKey(vm.provider, vm.checkpoint), { provider: vm.provider, kind: "checkpoint", snapshot: vm.checkpoint, size: vm.size, vmId: vm.id, startedAt: now });
     }
 
-    const open = this.db.query<OpenSpan, []>("SELECT id, provider, snapshot FROM snapshot_usage WHERE open = 1").all();
+    const open = this.db.all<OpenSpan>("SELECT id, provider, snapshot FROM snapshot_usage WHERE open = 1");
     for (const row of open) {
       const key = spanKey(row.provider, row.snapshot);
       if (live.delete(key)) {
-        if (heartbeat) this.db.query("UPDATE snapshot_usage SET ended_at = ? WHERE id = ?").run(now, row.id);
-      } else this.db.query("UPDATE snapshot_usage SET ended_at = ?, open = 0 WHERE id = ?").run(now, row.id);
+        if (heartbeat) this.db.run("UPDATE snapshot_usage SET ended_at = ? WHERE id = ?", now, row.id);
+      } else this.db.run("UPDATE snapshot_usage SET ended_at = ?, open = 0 WHERE id = ?", now, row.id);
     }
     for (const span of live.values()) {
-      this.db
-        .query("INSERT INTO snapshot_usage (provider, kind, snapshot, size, vm_id, started_at, ended_at, open) VALUES (?, ?, ?, ?, ?, ?, ?, 1)")
-        .run(span.provider, span.kind, span.snapshot, span.size, span.vmId, span.startedAt, now);
+      this.db.run(
+        "INSERT INTO snapshot_usage (provider, kind, snapshot, size, vm_id, started_at, ended_at, open) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
+        span.provider, span.kind, span.snapshot, span.size, span.vmId, span.startedAt, now,
+      );
     }
   }
 
   /** VM intervals overlapping `from` to `to`, clipped to it. Open ones run to `now`. */
   intervals(from: number, to: number, now = Date.now()): VmInterval[] {
-    const rows = this.db
-      .query<Omit<VmInterval, "repos"> & { repos: string; open: number }, [number, number]>(
-        `SELECT vm_id AS vmId, name, provider, size, state, repos, started_at AS startedAt, ended_at AS endedAt, open
+    const rows = this.db.all<Omit<VmInterval, "repos"> & { repos: string; open: number }>(
+      `SELECT vm_id AS vmId, name, provider, size, state, repos, started_at AS startedAt, ended_at AS endedAt, open
          FROM vm_usage WHERE started_at < ?2 AND (open = 1 OR ended_at > ?1) ORDER BY started_at, id`,
-      )
-      .all(from, to);
+      from, to,
+    );
     return rows.flatMap(({ open, repos, ...row }) => {
       const span = clip(row.startedAt, open ? now : row.endedAt, from, to);
       return span ? [{ ...row, ...span, repos: JSON.parse(repos) as string[] }] : [];
@@ -183,12 +171,11 @@ export class Usage {
 
   /** Snapshot spans overlapping `from` to `to`, clipped to it. Open ones run to `now`. */
   snapshotSpans(from: number, to: number, now = Date.now()): SnapshotSpan[] {
-    const rows = this.db
-      .query<SnapshotSpan & { open: number }, [number, number]>(
-        `SELECT provider, kind, snapshot, size, vm_id AS vmId, started_at AS startedAt, ended_at AS endedAt, open
+    const rows = this.db.all<SnapshotSpan & { open: number }>(
+      `SELECT provider, kind, snapshot, size, vm_id AS vmId, started_at AS startedAt, ended_at AS endedAt, open
          FROM snapshot_usage WHERE started_at < ?2 AND (open = 1 OR ended_at > ?1) ORDER BY started_at, id`,
-      )
-      .all(from, to);
+      from, to,
+    );
     return rows.flatMap(({ open, ...row }) => {
       const span = clip(row.startedAt, open ? now : row.endedAt, from, to);
       return span ? [{ ...row, ...span }] : [];

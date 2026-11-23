@@ -1,10 +1,10 @@
-import type { Server } from "bun";
 import {
   agentKinds,
   machineNameMaxLength,
   providerIds,
   vmSizes,
   type LiveMessage,
+  type BridgeNetworkInfo,
   type Overview,
   type ProviderId,
   type ProviderInfo,
@@ -22,22 +22,41 @@ import type { Hub } from "./gateway/hub.ts";
 import type { T3Gateway } from "./gateway/http.ts";
 import { githubName } from "./gateway/repos.ts";
 import { isWorking } from "./gateway/types.ts";
-import { disableTailscaleHttps, enableTailscaleHttps, networkInfo } from "./network.ts";
 import { providers } from "./providers/index.ts";
 import { envVars, machineName, saveEnvVars, type Secrets, type Settings } from "./settings.ts";
+import { InstructionsError, isInstructionName } from "./instructions.ts";
 import { SkillError, type Skills } from "./skills.ts";
 import type { Store } from "./store.ts";
 import type { Traffic } from "./traffic.ts";
-import { normalizeHostname, requestOrigin, tunnelTokenSecret, type CloudflareTunnel } from "./tunnel.ts";
 import type { Usage } from "./usage.ts";
 import { envNameProblem, envValueProblem } from "./vm/runtime.ts";
 import type { Stats } from "./vm/stats.ts";
 
+/**
+ * Where VM Bridge is reached, and the settings for it. Bun's covers loopback, Tailscale, the local network and
+ * Cloudflare Tunnel (bun/bridge-network.ts). A Worker has only the address it was reached on.
+ */
+export interface BridgeNetwork {
+  /** `request` is the one asking, whose address a Worker shows as its own. */
+  info(request: Request): Promise<BridgeNetworkInfo>;
+  /** Whether the dashboard's API answers on this Host header, against DNS rebinding. */
+  allows(host: string | null): Promise<boolean>;
+  /** A POST to /network/<setting>, such as the Tailscale HTTPS switch. Null when this runtime has no such setting. */
+  change(setting: string, input: Record<string, unknown>): Promise<BridgeNetworkInfo | null>;
+}
+
+/** Who sent a request, for login throttling, and whether it arrived over HTTPS, for the cookie's Secure flag. */
+export interface RequestOrigin {
+  address: string;
+  secure: boolean;
+}
+
 export interface AdminDeps {
   version: string;
   startedAt: number;
-  host: string;
-  port: number;
+  network: BridgeNetwork;
+  /** Where the dashboard password is set instead of the dashboard, such as a Worker's secret. Null when it can be changed here. */
+  passwordSource: string | null;
   settings: Settings;
   secrets: Secrets;
   store: Store;
@@ -51,15 +70,27 @@ export interface AdminDeps {
   stats: Stats;
   skills: Skills;
   usage: Usage;
-  tunnel: () => CloudflareTunnel;
 }
 
-class BadRequest extends Error {}
+export class BadRequest extends Error {}
 
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
 const loggedIn = (cookie: string) => new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json", "set-cookie": cookie } });
 const isProvider = (id: unknown): id is ProviderId => (providerIds as readonly unknown[]).includes(id);
 const isSize = (size: unknown): size is VmSize => (vmSizes as readonly unknown[]).includes(size);
+
+/** Whether a browser sent this from a page on the address it was sent to. Browsers send Origin with every POST. */
+function sameOrigin(request: Request) {
+  const origin = request.headers.get("origin");
+  const host = request.headers.get("host");
+  if (!origin) return request.headers.get("sec-fetch-site") === "same-origin";
+  try {
+    const url = new URL(origin);
+    return host !== null && new URL(`${url.protocol}//${host}`).host === url.host;
+  } catch {
+    return false;
+  }
+}
 
 async function body(request: Request): Promise<Record<string, unknown>> {
   const value: unknown = await request.json().catch(() => null);
@@ -88,9 +119,11 @@ function timeRange(request: Request) {
 export class Admin {
   constructor(private readonly deps: AdminDeps) {}
 
-  async fetch(request: Request, server: Server<unknown>, viaTunnel = false): Promise<Response> {
+  async fetch(request: Request, origin: RequestOrigin): Promise<Response> {
     const path = new URL(request.url).pathname.slice("/admin/api".length);
     const { auth } = this.deps;
+    if (!(await this.deps.network.allows(request.headers.get("host")))) return new Response("Unknown host", { status: 421 });
+    if (request.method !== "GET" && request.method !== "HEAD" && !sameOrigin(request)) return json({ error: "Send this from the dashboard." }, 403);
     // A JSON body forces a CORS preflight, which VM Bridge never answers, so other sites cannot post here.
     if (request.method !== "GET" && !request.headers.get("content-type")?.startsWith("application/json")) {
       return json({ error: "Send JSON." }, 415);
@@ -99,7 +132,7 @@ export class Admin {
       if (path === "/auth" && request.method === "GET") {
         return json({ authenticated: auth.authenticated(request), hasPassword: auth.hasKey(), onboarded: this.deps.settings.get("onboarded") });
       }
-      const { address, secure } = requestOrigin(request, server.requestIP(request)?.address, viaTunnel);
+      const { address, secure } = origin;
       if (path === "/login" && request.method === "POST") {
         const { key } = await body(request);
         const cookie = await auth.login(typeof key === "string" ? key : "", address, secure);
@@ -117,7 +150,7 @@ export class Admin {
       return await this.route(request, path, address);
     } catch (error) {
       if (error instanceof TooManyAttempts) return json({ error: error.message }, 429);
-      if (error instanceof BadRequest || error instanceof InvalidPassword || error instanceof InvalidSignIn || error instanceof GitHubRejected || error instanceof SkillError) return json({ error: error.message }, 400);
+      if (error instanceof BadRequest || error instanceof InvalidPassword || error instanceof InvalidSignIn || error instanceof GitHubRejected || error instanceof SkillError || error instanceof InstructionsError) return json({ error: error.message }, 400);
       return json({ error: message(error) }, 500);
     }
   }
@@ -128,9 +161,12 @@ export class Admin {
     const [, section, id, action] = path.split("/");
 
     if (path === "/logout" && method === "POST") {
-      return new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json", "set-cookie": auth.logout(request) } });
+      const headers = new Headers({ "content-type": "application/json" });
+      for (const cookie of auth.logout(request)) headers.append("set-cookie", cookie);
+      return new Response(JSON.stringify({ ok: true }), { headers });
     }
     if (path === "/key" && method === "POST") {
+      if (this.deps.passwordSource) throw new BadRequest(`Change the password in ${this.deps.passwordSource}.`);
       const input = await body(request);
       const current = typeof input.current === "string" ? input.current : "";
       const next = text(input.key, "The password");
@@ -168,37 +204,10 @@ export class Admin {
       }
     }
 
-    if (path === "/network" && method === "GET") return json(await this.network());
-    if (path === "/network/https" && method === "POST") {
-      const { enabled } = await body(request);
-      if (enabled === true) await enableTailscaleHttps(this.deps.port);
-      else await disableTailscaleHttps(this.deps.port);
-      return json(await this.network());
-    }
-    if (path === "/network/cloudflare" && method === "POST") {
-      const input = await body(request);
-      const current = settings.get("cloudflareTunnel");
-      const next = { ...current };
-      if (input.enabled !== undefined) {
-        if (typeof input.enabled !== "boolean") throw new BadRequest("Say whether to turn the tunnel on.");
-        next.enabled = input.enabled;
-      }
-      if (input.hostname !== undefined) {
-        const hostname = input.hostname === null ? "" : text(input.hostname, "The hostname");
-        next.hostname = hostname ? normalizeHostname(hostname) : null;
-        if (hostname && !next.hostname) throw new BadRequest("Use a hostname such as bridge.example.com.");
-      }
-      // Like provider secrets: empty leaves the token as it is, null removes it.
-      if (input.token === null) secrets.set(tunnelTokenSecret, null);
-      else if (input.token !== undefined) {
-        const token = text(input.token, "The token");
-        if (token) secrets.set(tunnelTokenSecret, token);
-      }
-      settings.set("cloudflareTunnel", next);
-      const tunnel = this.deps.tunnel();
-      await tunnel.apply();
-      await tunnel.ready(30_000);
-      return json(await this.network());
+    if (path === "/network" && method === "GET") return json(await this.deps.network.info(request));
+    if (section === "network" && id && !action && method === "POST") {
+      const changed = await this.deps.network.change(id, await body(request));
+      return changed ? json(changed) : json({ error: "Not found." }, 404);
     }
 
     if (section === "providers") {
@@ -430,7 +439,7 @@ export class Admin {
         } catch (error) {
           throw new BadRequest(message(error));
         }
-        const network = await this.network();
+        const network = await this.deps.network.info(request);
         const urls = network.addresses.map((address) => {
           const url = `${address.url}/pair#token=${link.token}`;
           return { kind: address.kind, label: address.label, url };
@@ -465,7 +474,8 @@ export class Admin {
         const input = await body(request);
         if (input.source === "skills.sh") await skills.installFromSkillsSh(text(input.repo, "The repository"), text(input.skill, "The skill"));
         else if (input.source === "local") await skills.installLocal(text(input.path, "The folder"));
-        else throw new BadRequest("Pick a skill from skills.sh or this machine.");
+        else if (input.source === "upload") skills.installUpload(text(input.name, "The skill's name"), input.files);
+        else throw new BadRequest("Pick a skill from skills.sh or this machine, or upload one.");
         return json(skills.list());
       }
       if (id && action === "update" && method === "POST") return json({ changed: await skills.update(decodeURIComponent(id)) });
@@ -475,6 +485,13 @@ export class Admin {
       }
     }
 
+    if (path === "/instructions" && method === "GET") return json(skills.instructions.saved());
+    if (section === "instructions" && id && isInstructionName(id) && !action && method === "PUT") {
+      const input = await body(request);
+      if (typeof input.text !== "string") throw new BadRequest(`Send the text of ${id}.`);
+      skills.instructions.save(id, input.text);
+      return json(skills.instructions.saved());
+    }
     if (section === "instructions" && id && !action && method === "PUT") {
       const agent = agentKinds.find((kind) => kind === id);
       if (!agent) return json({ error: "No such agent." }, 404);
@@ -628,14 +645,13 @@ export class Admin {
       skills: this.deps.skills.list(),
       syncLocalSkills: this.deps.skills.syncAll,
       instructions: this.deps.skills.instructions.list(),
+      savedInstructions: this.deps.skills.instructions.savedNames(),
+      machine: this.deps.skills.hasMachine,
+      passwordSource: this.deps.passwordSource,
     };
   }
 
   /** Server-sent events: every traffic event, and a fresh overview whenever the fleet changes. */
-  private network() {
-    return networkInfo(this.deps.host, this.deps.port, this.deps.tunnel().info());
-  }
-
   private events(request: Request) {
     const { traffic, fleet, hub, auth } = this.deps;
     const encoder = new TextEncoder();

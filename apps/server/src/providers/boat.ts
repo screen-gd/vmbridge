@@ -1,8 +1,8 @@
-import { setTimeout as sleep } from "node:timers/promises";
 import { deflateRawSync } from "node:zlib";
 import { connectSandbox } from "@opencoredev/sandbox-sdk";
 import { boat } from "@opencoredev/sandbox-sdk/boat";
 import type { SelectOption } from "@vmbridge/contracts";
+import { sleep } from "../runtime.ts";
 import { notFound, sdkDriver } from "./sdk.ts";
 import { required, type Box, type ProviderDefinition, type ProviderState } from "./types.ts";
 

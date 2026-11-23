@@ -229,7 +229,7 @@ export default function Docs() {
               <Block>{`git clone https://github.com/vkpdeveloper/vmbridge
 cd vmbridge
 bun install
-bun run build          # dist/vmbridge
+bun run compile        # dist/vmbridge
 ./dist/vmbridge`}</Block>
             </Section>
 
@@ -396,8 +396,8 @@ bun run build          # dist/vmbridge
 
             <Section id="sign-in" title="Agent sign-ins and GitHub">
               <p>
-                Agents and git sign in only with what you add in Setup, never with sign-ins from the VM provider. Each agent sign-in is a profile saved under{" "}
-                <Code>~/.vmbridge/auths</Code>, readable only by you. Each agent uses one profile at a time, and VMs get it when they start.
+                Agents and git sign in only with what you add in Setup, never with sign-ins from the VM provider. Each agent sign-in is a profile saved, encrypted, in{" "}
+                <Code>~/.vmbridge/main.db</Code>. Each agent uses one profile at a time, and VMs get it when they start.
               </p>
               <Table
                 head={["Sign-in", "Set on the VM as"]}

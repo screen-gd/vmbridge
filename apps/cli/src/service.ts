@@ -1,19 +1,27 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { dataDir } from "@vmbridge/server";
+import { childEnv, dataDir } from "@vmbridge/server";
 
 const label = "dev.vmbridge";
 
+/** The background service's output on macOS. It can hold provider errors and addresses, so only the owner reads it. */
+export const logPath = () => join(dataDir(), "vmbridge.log");
+
+/** launchd appends to the log with whatever mode it already has, and makes a new one world-readable. */
+export function protectLog() {
+  if (existsSync(logPath())) chmodSync(logPath(), 0o600);
+}
+
 interface ServiceOptions {
-  host: string;
+  host?: string;
   port: number;
 }
 
 /** The command that runs VM Bridge: the compiled binary itself, or Bun with this script in development. */
 function command(options: ServiceOptions) {
   const compiled = Bun.main.startsWith("/$bunfs/") || Bun.main.startsWith("B:/~BUN/");
-  return [process.execPath, ...(compiled ? [] : [Bun.main]), "run", "--host", options.host, "--port", String(options.port)];
+  return [process.execPath, ...(compiled ? [] : [Bun.main]), "run", ...(options.host ? ["--host", options.host] : []), "--port", String(options.port)];
 }
 
 /** Variables the service needs: a PATH that finds git and tailscale, and the data directory if it was moved. */
@@ -25,7 +33,7 @@ function environment() {
 }
 
 async function exec(args: string[]) {
-  const child = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+  const child = Bun.spawn(args, { stdout: "pipe", stderr: "pipe", stdin: "ignore", env: childEnv() });
   const [stderr, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
   return { ok: code === 0, stderr: stderr.trim() };
 }
@@ -48,8 +56,10 @@ const launchd = {
   domain: () => `gui/${process.getuid?.()}`,
 
   async install(options: ServiceOptions) {
-    const log = join(dataDir(), "vmbridge.log");
+    const log = logPath();
     mkdirSync(dataDir(), { recursive: true, mode: 0o700 });
+    writeFileSync(log, "", { flag: "a", mode: 0o600 });
+    protectLog();
     const strings = (values: string[]) => values.map((value) => `      <string>${xml(value)}</string>`).join("\n");
     const env = Object.entries(environment())
       .map(([key, value]) => `      <key>${key}</key>\n      <string>${xml(value)}</string>`)

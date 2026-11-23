@@ -294,7 +294,7 @@ function GitHub({ account }: { account: GitHubAccount | null }) {
         <>
           <Item variant="outline">
             <ItemMedia>
-              <img src={account.avatarUrl} alt="" className="size-10 rounded-full" />
+              <img src={account.avatarUrl} alt="" referrerPolicy="no-referrer" className="size-10 rounded-full" />
             </ItemMedia>
             <ItemContent>
               <ItemTitle>{account.name ?? account.login}</ItemTitle>
@@ -304,7 +304,17 @@ function GitHub({ account }: { account: GitHubAccount | null }) {
               <Button variant="outline" size="sm" disabled={action.busy} onClick={() => void action.run(() => api("/github/check", { body: {} }))}>
                 Check again
               </Button>
-              <Button variant="ghost" size="sm" className="text-destructive" disabled={action.busy} onClick={() => void action.run(() => api("/github", { method: "DELETE" }))}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive"
+                disabled={action.busy}
+                onClick={() =>
+                  void action
+                    .run(() => api("/github", { method: "DELETE" }))
+                    .then((ok) => ok && toast.success("GitHub disconnected. Sleeping VMs drop the token when they wake. Revoke it on GitHub too."))
+                }
+              >
                 Disconnect
               </Button>
             </ItemActions>
@@ -337,7 +347,7 @@ function GitHub({ account }: { account: GitHubAccount | null }) {
         <Field data-invalid={Boolean(action.error)}>
           <FieldLabel htmlFor="github-token">{account ? "Replace token" : "Personal access token"}</FieldLabel>
           <Input id="github-token" className="h-9" type="password" autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} placeholder="github_pat_..." />
-          <FieldDescription>Needs read and write access to contents and pull requests.</FieldDescription>
+          <FieldDescription>{githubTokenHint}</FieldDescription>
           {action.error && <FieldError>{action.error}</FieldError>}
         </Field>
         <div className="flex flex-wrap gap-2">
@@ -345,7 +355,7 @@ function GitHub({ account }: { account: GitHubAccount | null }) {
             {account ? "Replace" : "Connect"}
           </Button>
           <Button asChild variant="outline" size="lg" className="h-9 px-4">
-            <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">
+            <a href={githubTokenUrl} target="_blank" rel="noreferrer">
               Create a token on GitHub
               <HugeiconsIcon icon={LinkSquare02Icon} data-icon="inline-end" strokeWidth={1.75} />
             </a>
@@ -355,6 +365,13 @@ function GitHub({ account }: { account: GitHubAccount | null }) {
     </Section>
   );
 }
+
+/**
+ * GitHub's fine-grained token form, with what VMs need already chosen: contents to clone and push, pull requests for
+ * `gh pr create`. GitHub cannot preselect repository access, so the hint asks for it.
+ */
+export const githubTokenUrl = `https://github.com/settings/personal-access-tokens/new?${new URLSearchParams({ name: "VM Bridge", contents: "write", pull_requests: "write" })}`;
+export const githubTokenHint = "Choose All repositories. Contents and pull requests come set to read and write.";
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
@@ -420,7 +437,11 @@ export function AgentSection({ agent, profiles, collapsed }: { agent: AgentKind;
               size="sm"
               className="text-destructive"
               disabled={action.busy}
-              onClick={() => void action.run(() => api(`/agents/${profile.id}`, { method: "DELETE" }))}
+              onClick={() =>
+                void action
+                  .run(() => api(`/agents/${profile.id}`, { method: "DELETE" }))
+                  .then((ok) => ok && toast.success(`${profile.name} removed. Sleeping VMs drop it when they wake. Revoke it at its source too.`))
+              }
             >
               Remove
             </Button>

@@ -1,12 +1,15 @@
-// Compiles VM Bridge (server, dashboard and CLI) into one executable.
-// Usage: bun scripts/build.ts [bun-linux-x64 | bun-linux-arm64 | bun-darwin-arm64 | bun-darwin-x64]
+// Builds the dashboard into static files for Cloudflare Workers Static Assets: the page and its files under
+// dist/assets/dashboard (the dashboard lives at /dashboard), and a _headers file giving them the security headers the
+// Bun server sends. The Bun server bundles the dashboard itself and does not use these.
 import tailwind from "bun-plugin-tailwind";
+import { securityHeaders } from "../apps/server/src/security-headers.ts";
 
-const target = process.argv[2] as Bun.Build.CompileTarget | undefined;
-const outfile = `dist/vmbridge${target ? `-${target.replace(/^bun-/, "")}` : ""}`;
+const root = "dist/assets";
+const outdir = `${root}/dashboard`;
 const result = await Bun.build({
-  entrypoints: ["apps/cli/src/index.ts"],
-  compile: { ...(target ? { target } : {}), outfile, autoloadBunfig: false, autoloadDotenv: false },
+  entrypoints: ["apps/web/index.html"],
+  outdir,
+  publicPath: "/dashboard/",
   plugins: [tailwind],
   minify: true,
   define: { "process.env.NODE_ENV": JSON.stringify("production") },
@@ -15,4 +18,6 @@ if (!result.success) {
   for (const log of result.logs) console.error(log);
   process.exit(1);
 }
-console.log(`Built ${outfile}`);
+const headers = Object.entries(securityHeaders).map(([name, value]) => `  ${name}: ${value}`);
+await Bun.write(`${root}/_headers`, ["/*", ...headers, ""].join("\n"));
+console.log(`Built ${outdir}`);

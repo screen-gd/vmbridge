@@ -1,5 +1,6 @@
 import { networkInterfaces } from "node:os";
 import type { Address, CloudflareInfo, NetworkInfo } from "@vmbridge/contracts";
+import { childEnv } from "./env.ts";
 
 const macAppBinary = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 const httpsPortCandidates = [443, 8443, 10443, 11443, 12443];
@@ -22,7 +23,7 @@ function tailscaleBinary(): string | null {
 async function tailscale(args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   const binary = tailscaleBinary();
   if (!binary) return { ok: false, stdout: "", stderr: "Tailscale is not installed." };
-  const child = Bun.spawn([binary, ...args], { stdout: "pipe", stderr: "pipe", stdin: "ignore", timeout: 10_000 });
+  const child = Bun.spawn([binary, ...args], { stdout: "pipe", stderr: "pipe", stdin: "ignore", timeout: 10_000, env: childEnv() });
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   return { ok: code === 0, stdout, stderr };
 }
@@ -48,32 +49,90 @@ function servedUrl(serve: ServeStatus | null, port: number): string | null {
   return null;
 }
 
-export async function networkInfo(host: string, port: number, cloudflare: CloudflareInfo): Promise<NetworkInfo> {
-  const addresses: Address[] = [{ kind: "local", label: "This machine", url: `http://127.0.0.1:${port}` }];
+/** This machine's own IPv4 addresses, by interface, leaving out loopback. */
+function localIpv4(): { name: string; address: string }[] {
+  return Object.entries(networkInterfaces()).flatMap(([name, entries]) =>
+    (entries ?? []).filter((entry) => !entry.internal && entry.family === "IPv4").map((entry) => ({ name, address: entry.address })),
+  );
+}
+
+let tailnet: { key: string; at: number; ips: Promise<Set<string>> } | null = null;
+
+/**
+ * Tailscale's addresses for this machine, empty while it is not installed or not up. Asks Tailscale again when this
+ * machine's addresses change, such as when Tailscale comes up, and every 30 seconds in case it was still starting.
+ */
+function tailnetIps(): Promise<Set<string>> {
+  const key = localIpv4()
+    .map((entry) => entry.address)
+    .join(",");
+  if (!tailnet || tailnet.key !== key || Date.now() - tailnet.at > 30_000) {
+    const ips = readJson<TailscaleStatus>(["status", "--json"]).then((status) => new Set(status?.BackendState === "Running" ? (status.Self?.TailscaleIPs ?? []) : []));
+    tailnet = { key, at: Date.now(), ips };
+  }
+  return tailnet.ips;
+}
+
+/**
+ * The addresses VM Bridge listens on without --host: loopback, Tailscale's address (WireGuard already encrypts the
+ * tailnet), and the local network only when switched on, since plain HTTP there shows passwords and cookies to anyone
+ * on the same Wi-Fi.
+ */
+export function servedHosts(addresses: string[], tailnetIps: Set<string>, localNetwork: boolean): string[] {
+  const hosts = new Set(["127.0.0.1"]);
+  for (const address of addresses) {
+    if (localNetwork || tailnetIps.has(address)) hosts.add(address);
+  }
+  return [...hosts];
+}
+
+export async function wantedHosts(localNetwork: boolean): Promise<string[]> {
+  return servedHosts(
+    localIpv4().map((entry) => entry.address),
+    await tailnetIps(),
+    localNetwork,
+  );
+}
+
+export interface Served {
+  /** The addresses VM Bridge listens on right now. */
+  hosts: string[];
+  port: number;
+  /** Started with --host, which decides the addresses instead of the local network switch. */
+  fixed: boolean;
+  /** The saved local network switch. */
+  localNetwork: boolean;
+}
+
+/** Only addresses VM Bridge actually answers on, so links never point at one that does not work. */
+export async function networkInfo(served: Served, cloudflare: CloudflareInfo): Promise<NetworkInfo> {
+  const { hosts, port, fixed } = served;
+  const wildcard = hosts.some((host) => host === "0.0.0.0" || host === "::");
+  const serves = (ip: string) => wildcard || hosts.includes(ip);
+  const loopback = serves("127.0.0.1") || hosts.includes("localhost");
+  const addresses: Address[] = loopback ? [{ kind: "local", label: "This machine", url: `http://127.0.0.1:${port}` }] : [];
   const installed = tailscaleBinary() !== null;
   const status = installed ? await readJson<TailscaleStatus>(["status", "--json"]) : null;
   const running = status?.BackendState === "Running";
   const tailnetIps = new Set(status?.Self?.TailscaleIPs ?? []);
   const dnsName = status?.Self?.DNSName?.replace(/\.$/, "") || null;
 
-  if (host === "0.0.0.0" || host === "::") {
-    for (const [name, entries] of Object.entries(networkInterfaces())) {
-      for (const entry of entries ?? []) {
-        if (entry.internal || entry.family !== "IPv4" || tailnetIps.has(entry.address)) continue;
-        addresses.push({ kind: "lan", label: `Local network (${name})`, url: `http://${entry.address}:${port}` });
-      }
-    }
-    if (running) {
-      const ipv4 = [...tailnetIps].find((ip) => !ip.includes(":"));
-      if (ipv4) addresses.push({ kind: "tailscale", label: "Tailscale IP", url: `http://${ipv4}:${port}` });
-      if (dnsName) addresses.push({ kind: "tailscale-dns", label: "Tailscale name", url: `http://${dnsName}:${port}` });
-    }
+  for (const { name, address } of localIpv4()) {
+    if (tailnetIps.has(address) || !serves(address)) continue;
+    addresses.push({ kind: "lan", label: `Local network (${name})`, url: `http://${address}:${port}` });
+  }
+  const ipv4 = running ? [...tailnetIps].find((ip) => !ip.includes(":")) : undefined;
+  if (ipv4 && serves(ipv4)) {
+    addresses.push({ kind: "tailscale", label: "Tailscale IP", url: `http://${ipv4}:${port}` });
+    if (dnsName) addresses.push({ kind: "tailscale-dns", label: "Tailscale name", url: `http://${dnsName}:${port}` });
   }
 
+  // tailscale serve forwards to the loopback listener.
   const httpsUrl = running ? servedUrl(await readJson<ServeStatus>(["serve", "status", "--json"]), port) : null;
-  if (httpsUrl) addresses.push({ kind: "tailscale-https", label: "Tailscale HTTPS", url: httpsUrl });
+  if (httpsUrl && loopback) addresses.push({ kind: "tailscale-https", label: "Tailscale HTTPS", url: httpsUrl });
   if (cloudflare.url) addresses.push({ kind: "cloudflare", label: "Cloudflare Tunnel", url: cloudflare.url });
-  return { host, port, addresses, tailscale: { installed, running, dnsName, httpsUrl }, cloudflare };
+  const localNetwork = { enabled: fixed ? wildcard || addresses.some((address) => address.kind === "lan") : served.localNetwork, fixed };
+  return { platform: "bun", port, localNetwork, addresses, tailscale: { installed, running, dnsName, httpsUrl }, cloudflare };
 }
 
 /**

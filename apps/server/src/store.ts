@@ -1,6 +1,7 @@
-import type { Database } from "bun:sqlite";
+import type { Sql } from "./sql.ts";
 import type { ProviderId, VmSize, VmState } from "@vmbridge/contracts";
 import { Encryption } from "./encryption.ts";
+import type { Plaintext } from "./settings.ts";
 
 export interface VmRow {
   id: string;
@@ -124,20 +125,18 @@ export class Store {
   private projectCache: ProjectRow[] | null = null;
 
   constructor(
-    readonly db: Database,
-    private readonly encryption: Encryption,
+    readonly db: Sql,
+    readonly encryption: Encryption,
   ) {}
 
   vms(): VmRow[] {
-    return this.db
-      .query<VmRow, []>(`SELECT ${vmColumns} FROM vms ORDER BY created_at`)
-      .all()
+    return this.db.all<VmRow>(`SELECT ${vmColumns} FROM vms ORDER BY created_at`)
       .map((vm) => this.openVm(vm));
   }
 
   vm(id: string): VmRow | null {
-    const vm = this.db.query<VmRow, [string]>(`SELECT ${vmColumns} FROM vms WHERE id = ?`).get(id);
-    return vm && this.openVm(vm);
+    const vm = this.db.one<VmRow>(`SELECT ${vmColumns} FROM vms WHERE id = ?`, id);
+    return vm ? this.openVm(vm) : null;
   }
 
   /** The token for a VM's T3 server is stored encrypted. */
@@ -145,96 +144,87 @@ export class Store {
     return vm.t3Token ? { ...vm, t3Token: this.encryption.open(vm.t3Token, `vm:${vm.id}:t3Token`) } : vm;
   }
 
-  /** Encrypts T3 tokens saved before they were encrypted. Returns how many. */
-  sealPlaintext(): number {
-    const rows = this.db
-      .query<{ id: string; t3Token: string }, []>("SELECT id, t3_token AS t3Token FROM vms WHERE t3_token IS NOT NULL AND t3_token != ''")
-      .all()
+  /** Encrypts, or drops, T3 tokens stored unencrypted (see `Plaintext`). Returns what it changed. */
+  plaintext(action: Plaintext): string[] {
+    const rows = this.db.all<{ id: string; t3Token: string }>("SELECT id, t3_token AS t3Token FROM vms WHERE t3_token IS NOT NULL AND t3_token != ''")
       .filter((row) => !Encryption.isSealed(row.t3Token));
     this.db.transaction(() => {
-      for (const row of rows) this.updateVm(row.id, { t3Token: row.t3Token });
-    })();
-    return rows.length;
+      // Without a token, the VM's T3 server gets a new one when it next connects.
+      for (const row of rows) this.updateVm(row.id, { t3Token: action === "seal" ? row.t3Token : null });
+    });
+    return rows.map((row) => `T3 token of VM ${row.id}`);
   }
 
   insertVm(vm: Pick<VmRow, "id" | "provider" | "name" | "size" | "state" | "createdAt">) {
-    this.db
-      .query("INSERT INTO vms (id, provider, name, size, state, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(vm.id, vm.provider, vm.name, vm.size, vm.state, vm.createdAt);
+    this.db.run(
+      "INSERT INTO vms (id, provider, name, size, state, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      vm.id, vm.provider, vm.name, vm.size, vm.state, vm.createdAt,
+    );
   }
 
   updateVm(id: string, update: VmUpdate) {
     const { sql, values } = assignments(vmFields, update.t3Token ? { ...update, t3Token: this.encryption.seal(update.t3Token, `vm:${id}:t3Token`) } : update);
-    if (sql) this.db.query(`UPDATE vms SET ${sql} WHERE id = ?`).run(...values, id);
+    if (sql) this.db.run(`UPDATE vms SET ${sql} WHERE id = ?`, ...values, id);
   }
 
   base(provider: ProviderId, size: VmSize): BaseSnapshot | null {
-    return this.db
-      .query<BaseSnapshot, [string, string]>(
-        "SELECT snapshot, stamp, created_at AS createdAt, builder FROM base_snapshots WHERE provider = ? AND size = ?",
-      )
-      .get(provider, size);
+    return this.db.one<BaseSnapshot>(
+      "SELECT snapshot, stamp, created_at AS createdAt, builder FROM base_snapshots WHERE provider = ? AND size = ?",
+      provider, size,
+    ) ?? null;
   }
 
   bases(provider: ProviderId): (BaseSnapshot & { size: VmSize })[] {
-    return this.db
-      .query<BaseSnapshot & { size: VmSize }, [string]>(
-        "SELECT size, snapshot, stamp, created_at AS createdAt, builder FROM base_snapshots WHERE provider = ?",
-      )
-      .all(provider);
+    return this.db.all<BaseSnapshot & { size: VmSize }>(
+      "SELECT size, snapshot, stamp, created_at AS createdAt, builder FROM base_snapshots WHERE provider = ?",
+      provider,
+    );
   }
 
   /** Build VMs on record, of one provider or all. */
   builders(provider?: ProviderId): { provider: ProviderId; size: VmSize; builder: string }[] {
-    return this.db
-      .query<{ provider: ProviderId; size: VmSize; builder: string }, [string | null]>(
-        "SELECT provider, size, builder FROM base_snapshots WHERE builder IS NOT NULL AND (?1 IS NULL OR provider = ?1)",
-      )
-      .all(provider ?? null);
+    return this.db.all<{ provider: ProviderId; size: VmSize; builder: string }>(
+      "SELECT provider, size, builder FROM base_snapshots WHERE builder IS NOT NULL AND (?1 IS NULL OR provider = ?1)",
+      provider ?? null,
+    );
   }
 
   saveBase(provider: ProviderId, size: VmSize, update: Partial<BaseSnapshot>) {
     const { sql, values } = assignments(baseFields, update);
-    this.db.query("INSERT INTO base_snapshots (provider, size) VALUES (?, ?) ON CONFLICT DO NOTHING").run(provider, size);
-    if (sql) this.db.query(`UPDATE base_snapshots SET ${sql} WHERE provider = ? AND size = ?`).run(...values, provider, size);
+    this.db.run("INSERT INTO base_snapshots (provider, size) VALUES (?, ?) ON CONFLICT DO NOTHING", provider, size);
+    if (sql) this.db.run(`UPDATE base_snapshots SET ${sql} WHERE provider = ? AND size = ?`, ...values, provider, size);
   }
 
   deleteBase(provider: ProviderId, size: VmSize) {
-    this.db.query("DELETE FROM base_snapshots WHERE provider = ? AND size = ?").run(provider, size);
+    this.db.run("DELETE FROM base_snapshots WHERE provider = ? AND size = ?", provider, size);
   }
 
   retiredSnapshots(provider: ProviderId): string[] {
-    return this.db
-      .query<{ snapshot: string }, [string]>("SELECT snapshot FROM retired_snapshots WHERE provider = ?")
-      .all(provider)
+    return this.db.all<{ snapshot: string }>("SELECT snapshot FROM retired_snapshots WHERE provider = ?", provider)
       .map((row) => row.snapshot);
   }
 
   retireSnapshot(provider: ProviderId, snapshot: string) {
-    this.db.query("INSERT INTO retired_snapshots (provider, snapshot) VALUES (?, ?) ON CONFLICT DO NOTHING").run(provider, snapshot);
+    this.db.run("INSERT INTO retired_snapshots (provider, snapshot) VALUES (?, ?) ON CONFLICT DO NOTHING", provider, snapshot);
   }
 
   forgetRetired(provider: ProviderId, snapshot: string) {
-    this.db.query("DELETE FROM retired_snapshots WHERE provider = ? AND snapshot = ?").run(provider, snapshot);
+    this.db.run("DELETE FROM retired_snapshots WHERE provider = ? AND snapshot = ?", provider, snapshot);
   }
 
   /** Forgets a VM. Its projects stay, on their other VMs or a fresh one next time they are used. */
   deleteVm(id: string) {
     // Its project_vms rows go with it (ON DELETE CASCADE).
-    this.db.query("DELETE FROM vms WHERE id = ?").run(id);
+    this.db.run("DELETE FROM vms WHERE id = ?", id);
     this.projectCache = null;
   }
 
   projects(): readonly ProjectRow[] {
     if (!this.projectCache) {
-      const links = this.db
-        .query<ProjectVm & { projectId: string }, []>(
-          "SELECT project_id AS projectId, vm_id AS vmId, checkout_path AS checkoutPath FROM project_vms ORDER BY added_at, rowid",
-        )
-        .all();
-      this.projectCache = this.db
-        .query<Omit<ProjectRow, "vms">, []>(`SELECT ${projectColumns} FROM projects ORDER BY created_at`)
-        .all()
+      const links = this.db.all<ProjectVm & { projectId: string }>(
+        "SELECT project_id AS projectId, vm_id AS vmId, checkout_path AS checkoutPath FROM project_vms ORDER BY added_at, rowid",
+      );
+      this.projectCache = this.db.all<Omit<ProjectRow, "vms">>(`SELECT ${projectColumns} FROM projects ORDER BY created_at`)
         .map((project) => ({
           ...project,
           vms: links.filter((link) => link.projectId === project.id).map(({ vmId, checkoutPath }) => ({ vmId, checkoutPath })),
@@ -248,199 +238,186 @@ export class Store {
   }
 
   insertProject(project: Omit<ProjectRow, "vms">) {
-    this.db
-      .query("INSERT INTO projects (id, url, branch, title, created_at) VALUES (?, ?, ?, ?, ?)")
-      .run(project.id, project.url, project.branch, project.title, project.createdAt);
+    this.db.run(
+      "INSERT INTO projects (id, url, branch, title, created_at) VALUES (?, ?, ?, ?, ?)",
+      project.id, project.url, project.branch, project.title, project.createdAt,
+    );
     this.projectCache = null;
   }
 
   updateProject(id: string, update: ProjectUpdate) {
     const { sql, values } = assignments(projectFields, update);
-    if (sql) this.db.query(`UPDATE projects SET ${sql} WHERE id = ?`).run(...values, id);
+    if (sql) this.db.run(`UPDATE projects SET ${sql} WHERE id = ?`, ...values, id);
     this.projectCache = null;
   }
 
   /** Adds a VM to a project, after its existing ones. */
   addProjectVm(projectId: string, vmId: string) {
-    this.db
-      .query("INSERT OR IGNORE INTO project_vms (project_id, vm_id, added_at) VALUES (?, ?, ?)")
-      .run(projectId, vmId, Date.now());
+    this.db.run("INSERT OR IGNORE INTO project_vms (project_id, vm_id, added_at) VALUES (?, ?, ?)", projectId, vmId, Date.now());
     this.projectCache = null;
   }
 
   setCheckout(projectId: string, vmId: string, checkoutPath: string) {
-    this.db.query("UPDATE project_vms SET checkout_path = ? WHERE project_id = ? AND vm_id = ?").run(checkoutPath, projectId, vmId);
+    this.db.run("UPDATE project_vms SET checkout_path = ? WHERE project_id = ? AND vm_id = ?", checkoutPath, projectId, vmId);
     this.projectCache = null;
   }
 
   /** The local branches a project's checkout on a VM had when VM Bridge last read them. */
   branches(projectId: string, vmId: string): string[] {
-    const row = this.db
-      .query<{ branches: string | null }, [string, string]>("SELECT branches FROM project_vms WHERE project_id = ? AND vm_id = ?")
-      .get(projectId, vmId);
+    const row = this.db.one<{ branches: string | null }>("SELECT branches FROM project_vms WHERE project_id = ? AND vm_id = ?", projectId, vmId);
     return row?.branches ? (JSON.parse(row.branches) as string[]) : [];
   }
 
   setBranches(projectId: string, vmId: string, branches: readonly string[]) {
-    this.db.query("UPDATE project_vms SET branches = ? WHERE project_id = ? AND vm_id = ?").run(JSON.stringify(branches), projectId, vmId);
+    this.db.run("UPDATE project_vms SET branches = ? WHERE project_id = ? AND vm_id = ?", JSON.stringify(branches), projectId, vmId);
   }
 
   /** Takes a VM away from every project it held, such as when the provider lost it. */
   removeVmFromProjects(vmId: string) {
-    this.db.query("DELETE FROM project_vms WHERE vm_id = ?").run(vmId);
+    this.db.run("DELETE FROM project_vms WHERE vm_id = ?", vmId);
     this.projectCache = null;
   }
 
   deleteProject(id: string) {
-    this.db.query("DELETE FROM projects WHERE id = ?").run(id);
+    this.db.run("DELETE FROM projects WHERE id = ?", id);
     this.projectCache = null;
   }
 
   snapshot<T>(vmId: string, kind: SnapshotKind): T | null {
-    const row = this.db
-      .query<{ value: string | null }, [string]>(`SELECT ${kind} AS value FROM vm_snapshots WHERE vm_id = ?`)
-      .get(vmId);
+    const row = this.db.one<{ value: string | null }>(`SELECT ${kind} AS value FROM vm_snapshots WHERE vm_id = ?`, vmId);
     return row?.value ? (JSON.parse(row.value) as T) : null;
   }
 
   snapshots<T>(kind: SnapshotKind): Map<string, T> {
-    const rows = this.db
-      .query<{ vmId: string; value: string }, []>(
-        `SELECT vm_id AS vmId, ${kind} AS value FROM vm_snapshots WHERE ${kind} IS NOT NULL`,
-      )
-      .all();
+    const rows = this.db.all<{ vmId: string; value: string }>(`SELECT vm_id AS vmId, ${kind} AS value FROM vm_snapshots WHERE ${kind} IS NOT NULL`);
     return new Map(rows.map((row) => [row.vmId, JSON.parse(row.value) as T]));
   }
 
   saveSnapshot(vmId: string, kind: SnapshotKind, value: unknown) {
-    this.db
-      .query(
-        `INSERT INTO vm_snapshots (vm_id, ${kind}) VALUES (?, ?) ON CONFLICT (vm_id) DO UPDATE SET ${kind} = excluded.${kind}`,
-      )
-      .run(vmId, JSON.stringify(value));
+    this.db.run(
+      `INSERT INTO vm_snapshots (vm_id, ${kind}) VALUES (?, ?) ON CONFLICT (vm_id) DO UPDATE SET ${kind} = excluded.${kind}`,
+      vmId, JSON.stringify(value),
+    );
   }
 
   threadVm(threadId: string): string | null {
     return (
-      this.db.query<{ vmId: string }, [string]>("SELECT vm_id AS vmId FROM threads WHERE id = ?").get(threadId)?.vmId ??
+      this.db.one<{ vmId: string }>("SELECT vm_id AS vmId FROM threads WHERE id = ?", threadId)?.vmId ??
       null
     );
   }
 
+  /** Places a thread on a VM. Only VM Bridge's own placement calls this: a VM's report goes through `claimThread`. */
   setThreadVm(threadId: string, vmId: string) {
-    this.db
-      .query("INSERT INTO threads (id, vm_id) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET vm_id = excluded.vm_id")
-      .run(threadId, vmId);
+    this.db.run("INSERT INTO threads (id, vm_id) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET vm_id = excluded.vm_id", threadId, vmId);
+  }
+
+  /** A VM reporting a thread: it gets the thread when no VM has it yet. Returns whether the thread is that VM's. */
+  claimThread(threadId: string, vmId: string): boolean {
+    this.db.run("INSERT OR IGNORE INTO threads (id, vm_id) VALUES (?, ?)", threadId, vmId);
+    return this.threadVm(threadId) === vmId;
   }
 
   command(id: string) {
-    return this.db
-      .query<{ vmId: string; fingerprint: string; threadId: string | null }, [string]>(
-        "SELECT vm_id AS vmId, fingerprint, thread_id AS threadId FROM commands WHERE id = ?",
-      )
-      .get(id);
+    return this.db.one<{ vmId: string; fingerprint: string; threadId: string | null }>(
+      "SELECT vm_id AS vmId, fingerprint, thread_id AS threadId FROM commands WHERE id = ?",
+      id,
+    );
   }
 
   saveCommand(id: string, vmId: string, fingerprint: string, threadId: string | null) {
-    this.db
-      .query("INSERT OR IGNORE INTO commands (id, vm_id, fingerprint, thread_id) VALUES (?, ?, ?, ?)")
-      .run(id, vmId, fingerprint, threadId);
+    this.db.run("INSERT OR IGNORE INTO commands (id, vm_id, fingerprint, thread_id) VALUES (?, ?, ?, ?)", id, vmId, fingerprint, threadId);
   }
 
-  projection<T>(threadId: string): T | null {
-    const row = this.db
-      .query<{ data: string }, [string]>("SELECT data FROM projections WHERE thread_id = ?")
-      .get(threadId);
+  /** The cached projection of a thread, as the VM holding it reported it. */
+  projection<T>(threadId: string, vmId: string): T | null {
+    const row = this.db.one<{ data: string }>("SELECT data FROM projections WHERE thread_id = ? AND vm_id = ?", threadId, vmId);
     return row ? (JSON.parse(row.data) as T) : null;
   }
 
-  hasProjection(threadId: string) {
-    return this.db.query("SELECT 1 FROM projections WHERE thread_id = ?").get(threadId) !== null;
+  hasProjection(threadId: string, vmId: string) {
+    return this.db.one("SELECT 1 FROM projections WHERE thread_id = ? AND vm_id = ?", threadId, vmId) !== undefined;
   }
 
-  /** Keeps the newest projection: a late, older response never replaces a newer one. */
+  /** Keeps the newest projection: a late, older response never replaces a newer one from the same VM. */
   saveProjection(threadId: string, vmId: string, updatedAt: string | null, data: unknown) {
-    this.db
-      .query(
-        `INSERT INTO projections (thread_id, vm_id, updated_at, data) VALUES (?, ?, ?, ?)
+    this.db.run(
+      `INSERT INTO projections (thread_id, vm_id, updated_at, data) VALUES (?, ?, ?, ?)
          ON CONFLICT (thread_id) DO UPDATE SET vm_id = excluded.vm_id, updated_at = excluded.updated_at, data = excluded.data
-         WHERE projections.updated_at IS NULL OR excluded.updated_at IS NULL OR excluded.updated_at >= projections.updated_at`,
-      )
-      .run(threadId, vmId, updatedAt, JSON.stringify(data));
+         WHERE projections.vm_id != excluded.vm_id OR projections.updated_at IS NULL OR excluded.updated_at IS NULL
+           OR excluded.updated_at >= projections.updated_at`,
+      threadId, vmId, updatedAt, JSON.stringify(data),
+    );
   }
 
   clones<T>(): T[] {
-    return this.db
-      .query<{ snapshot: string }, []>("SELECT snapshot FROM clones")
-      .all()
+    return this.db.all<{ snapshot: string }>("SELECT snapshot FROM clones")
       .map((row) => JSON.parse(row.snapshot) as T);
   }
 
   saveClone(projectId: string, snapshot: unknown) {
-    this.db
-      .query(
-        "INSERT INTO clones (project_id, snapshot) VALUES (?, ?) ON CONFLICT (project_id) DO UPDATE SET snapshot = excluded.snapshot",
-      )
-      .run(projectId, JSON.stringify(snapshot));
+    this.db.run(
+      "INSERT INTO clones (project_id, snapshot) VALUES (?, ?) ON CONFLICT (project_id) DO UPDATE SET snapshot = excluded.snapshot",
+      projectId, JSON.stringify(snapshot),
+    );
   }
 
   recordVmEvent(vm: Pick<VmRow, "id" | "provider" | "size">, kind: VmEventKind, durationMs: number | null = null, at = Date.now()) {
-    this.db
-      .query("INSERT INTO vm_events (at, vm_id, provider, size, kind, duration_ms) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(at, vm.id, vm.provider, vm.size, kind, durationMs);
+    this.db.run(
+      "INSERT INTO vm_events (at, vm_id, provider, size, kind, duration_ms) VALUES (?, ?, ?, ?, ?, ?)",
+      at, vm.id, vm.provider, vm.size, kind, durationMs,
+    );
   }
 
   vmEvents(from: number, to: number): VmEvent[] {
-    return this.db
-      .query<VmEvent, [number, number]>(
-        "SELECT at, vm_id AS vmId, provider, size, kind, duration_ms AS durationMs FROM vm_events WHERE at >= ? AND at < ? ORDER BY at, id",
-      )
-      .all(from, to);
+    return this.db.all<VmEvent>(
+      "SELECT at, vm_id AS vmId, provider, size, kind, duration_ms AS durationMs FROM vm_events WHERE at >= ? AND at < ? ORDER BY at, id",
+      from, to,
+    );
   }
 
   /** Keeps the first sighting: the same run seen again changes nothing. */
   recordTurn(turn: Turn) {
-    this.db
-      .query("INSERT OR IGNORE INTO turns (thread_id, run_id, at, vm_id, provider, repo, agent, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(turn.threadId, turn.runId, turn.at, turn.vmId, turn.provider, turn.repo, turn.agent, turn.model);
+    this.db.run(
+      "INSERT OR IGNORE INTO turns (thread_id, run_id, at, vm_id, provider, repo, agent, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      turn.threadId, turn.runId, turn.at, turn.vmId, turn.provider, turn.repo, turn.agent, turn.model,
+    );
   }
 
   turns(from: number, to: number): Turn[] {
-    return this.db
-      .query<Turn, [number, number]>(
-        `SELECT thread_id AS threadId, run_id AS runId, at, vm_id AS vmId, provider, repo, agent, model
+    return this.db.all<Turn>(
+      `SELECT thread_id AS threadId, run_id AS runId, at, vm_id AS vmId, provider, repo, agent, model
          FROM turns WHERE at >= ? AND at < ? ORDER BY at`,
-      )
-      .all(from, to);
+      from, to,
+    );
   }
 
   /** Background failures in a range, with the provider of their VM when they name only the VM. */
   errorsIn(from: number, to: number): { at: number; provider: ProviderId | null }[] {
-    return this.db
-      .query<{ at: number; provider: ProviderId | null }, [number, number]>(
-        `SELECT e.at, COALESCE(e.provider, v.provider, (SELECT provider FROM vm_events WHERE vm_id = e.vm_id LIMIT 1)) AS provider
+    return this.db.all<{ at: number; provider: ProviderId | null }>(
+      `SELECT e.at, COALESCE(e.provider, v.provider, (SELECT provider FROM vm_events WHERE vm_id = e.vm_id LIMIT 1)) AS provider
          FROM errors e LEFT JOIN vms v ON v.id = e.vm_id WHERE e.at >= ? AND e.at < ? ORDER BY e.at`,
-      )
-      .all(from, to);
+      from, to,
+    );
   }
 
   /** Thread commands applied while their VM was away, waiting to be replayed on it. Oldest first. */
   heldCommands(vmId: string) {
-    return this.db
-      .query<{ id: string; payload: string; createdAt: number }, [string]>(
-        "SELECT id, payload, created_at AS createdAt FROM held_commands WHERE vm_id = ? ORDER BY created_at, rowid",
-      )
-      .all(vmId)
+    return this.db.all<{ id: string; payload: string; createdAt: number }>(
+      "SELECT id, payload, created_at AS createdAt FROM held_commands WHERE vm_id = ? ORDER BY created_at, rowid",
+      vmId,
+    )
       .map((row) => ({ id: row.id, payload: JSON.parse(row.payload) as Record<string, unknown>, createdAt: row.createdAt }));
   }
 
   holdCommand(id: string, vmId: string, payload: unknown, createdAt: number) {
-    this.db
-      .query("INSERT OR IGNORE INTO held_commands (id, vm_id, payload, created_at) VALUES (?, ?, ?, ?)")
-      .run(id, vmId, JSON.stringify(payload), createdAt);
+    this.db.run(
+      "INSERT OR IGNORE INTO held_commands (id, vm_id, payload, created_at) VALUES (?, ?, ?, ?)",
+      id, vmId, JSON.stringify(payload), createdAt,
+    );
   }
 
   dropHeldCommand(id: string) {
-    this.db.query("DELETE FROM held_commands WHERE id = ?").run(id);
+    this.db.run("DELETE FROM held_commands WHERE id = ?", id);
   }
 }

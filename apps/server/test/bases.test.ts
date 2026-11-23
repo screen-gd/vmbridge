@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, jest, spyOn, test } from "bun:test";
 import { SandboxError } from "@opencoredev/sandbox-sdk";
 import type { AgentAuth } from "../src/agent-auth/profiles.ts";
-import { openDatabase } from "../src/db.ts";
+import { openSocket } from "../src/bun/socket.ts";
+import { openDatabase } from "../src/bun/sqlite.ts";
 import { Fleet, SettingUp } from "../src/fleet.ts";
 import type { Box, Driver } from "../src/providers/index.ts";
 import { Secrets, Settings } from "../src/settings.ts";
@@ -78,7 +79,7 @@ function setup() {
     destroy: async (sandboxId: string) => void events.push(`destroy ${sandboxId}`),
     deleteCheckpoint: async (snapshot: string) => void events.push(`delete ${snapshot}`),
   };
-  const fleet = new Fleet(store, settings, new Secrets(db, testEncryption), traffic, agents, new Skills(db, testEncryption));
+  const fleet = new Fleet(store, settings, new Secrets(db, testEncryption), traffic, agents, new Skills(db, testEncryption), openSocket);
   fleet.driver = () => driver as unknown as Driver;
   fleets.push(fleet);
   return { fleet, store, settings, driver, events };

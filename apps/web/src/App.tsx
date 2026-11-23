@@ -62,8 +62,7 @@ export function App() {
   // A fresh bridge, or a logged in one that never finished onboarding, goes there. Once finished, onboarding goes to the dashboard.
   const screen = !auth ? null : !auth.hasPassword || (auth.authenticated && !auth.onboarded) ? "onboarding" : auth.authenticated ? "dashboard" : "login";
   useEffect(() => {
-    // The setup code rides in the fragment, so moving to onboarding keeps it.
-    if (screen === "onboarding" && location.pathname !== onboardingPath) history.replaceState(null, "", `${onboardingPath}${location.hash}`);
+    if (screen === "onboarding" && location.pathname !== onboardingPath) history.replaceState(null, "", onboardingPath);
     if (screen === "dashboard" && location.pathname === onboardingPath) history.replaceState(null, "", "/dashboard");
   }, [screen]);
 

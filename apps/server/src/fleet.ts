@@ -6,6 +6,7 @@ import type { CreateVm } from "./providers/types.ts";
 import { envVars, type Settings, type Secrets } from "./settings.ts";
 import { busyNotice, choose, maxVmsPerProject, overflowRetryMs, type VmLoad } from "./placement.ts";
 import { primaryVm, type ProjectRow, type Store, type VmRow } from "./store.ts";
+import { sleep, type OpenSocket } from "./runtime.ts";
 import type { Traffic } from "./traffic.ts";
 import { Backend, TokenRejected } from "./vm/backend.ts";
 import type { AgentAuth } from "./agent-auth/profiles.ts";
@@ -128,6 +129,7 @@ export class Fleet extends EventEmitter<FleetEvents> {
     private readonly traffic: Traffic,
     private readonly agents: AgentAuth,
     private readonly skills: Pick<Skills, "state" | "files">,
+    private readonly openSocket: OpenSocket,
   ) {
     super();
     this.bases = new Bases(
@@ -390,7 +392,7 @@ export class Fleet extends EventEmitter<FleetEvents> {
       // A T3 server still running from before VM Bridge restarted may be in the middle of a turn: then the idle sweep restarts it later.
       const backend = await this.connect(vm, box, await version, async (preview) => {
         if (wasAsleep || !vm.t3Token) return true;
-        const shell = await new Backend(vmId, preview, vm.t3Token).json<Shell>("/api/orchestration/shell").catch(() => null);
+        const shell = await new Backend(vmId, preview, vm.t3Token, this.openSocket).json<Shell>("/api/orchestration/shell").catch(() => null);
         return Boolean(shell && !hasLiveWork(shell));
       }, watch);
       watch.done();
@@ -427,15 +429,15 @@ export class Fleet extends EventEmitter<FleetEvents> {
     // refresh token that retired would fail, so take the VM's first. Otherwise `prepareVm` keeps the newer file.
     if (this.agents.codexDue()) {
       const codexAuth = await readCodexAuth(box);
-      if (codexAuth) this.agents.adoptCodex(codexAuth);
+      if (codexAuth) await this.agents.adoptCodex(codexAuth, vm.id);
       watch.lap("read Codex sign-in");
     }
     const credentials = await this.credentials();
-    const fingerprint = credentialsFingerprint(credentials);
-    const [prepared, preview] = await Promise.all([prepareVm(box, version, credentials), box.preview(t3Port)]);
+    const fingerprint = credentialsFingerprint(credentials, this.store.encryption);
+    const [prepared, preview] = await Promise.all([prepareVm(box, version, credentials, fingerprint), box.preview(t3Port)]);
     watch.lap("prepare VM, preview URL");
     if (prepared.codexAuth) {
-      this.agents.adoptCodex(prepared.codexAuth);
+      await this.agents.adoptCodex(prepared.codexAuth, vm.id);
       // A file VM Bridge did not adopt, such as another account's, is replaced after all.
       const ours = (await this.credentials()).codexAuthJson;
       if (ours && ours !== prepared.codexAuth) await writeCodexAuth(box, ours);
@@ -450,14 +452,14 @@ export class Fleet extends EventEmitter<FleetEvents> {
       throw new Error(`T3 ${version} speaks orchestration protocol ${server.descriptor.orchestrationProtocolVersion}. VM Bridge supports 2.`);
     }
     if (restart && server.credentials !== fingerprint) this.unrestartable.set(vm.id, fingerprint);
-    let backend = new Backend(vm.id, preview, server.token);
+    let backend = new Backend(vm.id, preview, server.token, this.openSocket);
     try {
       try {
         await backend.connect();
       } catch (error) {
         if (!(error instanceof TokenRejected)) throw error;
         server = await startT3(box, null);
-        backend = new Backend(vm.id, preview, server.token);
+        backend = new Backend(vm.id, preview, server.token, this.openSocket);
         await backend.connect();
       }
       watch.lap("open T3 socket");
@@ -498,7 +500,7 @@ export class Fleet extends EventEmitter<FleetEvents> {
       const vm = this.store.vm(vmId);
       const backend = this.backend(vmId);
       const box = this.boxes.get(vmId);
-      if (!vm || !backend || !box || vm.t3Credentials === credentialsFingerprint(await this.credentials())) return;
+      if (!vm || !backend || !box || vm.t3Credentials === credentialsFingerprint(await this.credentials(), this.store.encryption)) return;
       if (!(await idle(backend))) return;
       // Nothing may wait between this check and taking the backend away, or new work could start on a closing socket.
       if (this.leased(vmId)) return;
@@ -525,15 +527,16 @@ export class Fleet extends EventEmitter<FleetEvents> {
       return box ? [{ vmId, box }] : [];
     });
     // A VM's Codex may have refreshed its tokens since VM Bridge last saw them. Keep the newest before overwriting.
-    for (const { box } of awake) {
+    for (const { vmId, box } of awake) {
       const current = await readCodexAuth(box);
-      if (current) this.agents.adoptCodex(current);
+      if (current) await this.agents.adoptCodex(current, vmId);
     }
     const credentials = await this.credentials();
+    const fingerprint = credentialsFingerprint(credentials, this.store.encryption);
     await Promise.all(
       awake.map(({ vmId, box }) =>
         this.exclusive(vmId, async () => {
-          if (this.backend(vmId)) await writeCredentials(box, credentials);
+          if (this.backend(vmId)) await writeCredentials(box, credentials, fingerprint);
         }).catch(() => this.traffic.record({ kind: "provider", operation: "write sign-ins", vmId, status: "error" })),
       ),
     );
@@ -600,7 +603,7 @@ export class Fleet extends EventEmitter<FleetEvents> {
    */
   private async reconnect(vmId: string) {
     for (const pause of this.reconnectPausesMs) {
-      await Bun.sleep(pause);
+      await sleep(pause);
       const state = this.store.vm(vmId)?.state;
       // Stopping, removed, put to sleep, or reconnected by a request meanwhile.
       if (this.closed || !state || state === "sleeping" || state === "gone" || this.backend(vmId)) return;
@@ -980,7 +983,7 @@ fi`,
     const github = token && account ? { token, login: account.login, name: account.name ?? account.login, email: account.email } : undefined;
     const env = envVars(this.secrets);
     const credentials: VmCredentials = { ...(await this.agents.vmSecrets()), github, ...(Object.keys(env).length ? { env } : {}) };
-    const fingerprint = credentialsFingerprint(credentials);
+    const fingerprint = credentialsFingerprint(credentials, this.store.encryption);
     if (fingerprint !== this.latest) {
       this.latest = fingerprint;
       this.emit("changed");
@@ -994,14 +997,16 @@ fi`,
    */
   async syncCodexAuth() {
     if (!this.agents.codexDue()) return;
-    const boxes = [...this.boxes.values()];
-    for (const box of boxes) {
+    const boxes = [...this.boxes];
+    let adopted = false;
+    for (const [vmId, box] of boxes) {
       const current = await readCodexAuth(box);
-      if (current) this.agents.adoptCodex(current);
+      if (current && (await this.agents.adoptCodex(current, vmId))) adopted = true;
     }
-    const authJson = await this.agents.refreshCodex(true);
+    // The VM's own refresh retired the refresh token the other VMs hold, so they all need the adopted file.
+    const authJson = await this.agents.refreshCodex(!adopted);
     if (!authJson) return;
-    await Promise.all(boxes.map((box) => writeCodexAuth(box, authJson).catch(() => {})));
+    await Promise.all(boxes.map(([, box]) => writeCodexAuth(box, authJson).catch(() => {})));
   }
 
   close() {

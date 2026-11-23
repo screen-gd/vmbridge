@@ -1,10 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { AgentAuth, InvalidSignIn } from "../src/agent-auth/profiles.ts";
 import type { CodexAuthFile } from "../src/agent-auth/codex.ts";
-import { openDatabase } from "../src/db.ts";
+import { openDatabase } from "../src/bun/sqlite.ts";
 import { Settings } from "../src/settings.ts";
 import { prepareVm } from "../src/vm/runtime.ts";
 import { recordingBox } from "./vm-program.ts";
@@ -27,11 +24,13 @@ function fakeFetch(answer: (url: string, init?: RequestInit) => Response) {
 }
 
 function setup() {
-  const dir = mkdtempSync(join(tmpdir(), "vmbridge-auths-"));
   const db = openDatabase(":memory:");
   const settings = new Settings(db);
-  return { dir, settings, auth: new AgentAuth(join(dir, "auths"), settings, testEncryption) };
+  return { db, settings, auth: new AgentAuth(db, settings, testEncryption) };
 }
+
+const stored = (db: ReturnType<typeof openDatabase>, id: string) =>
+  db.one<{ profile: string; codexAuth: string | null }>("SELECT profile, codex_auth AS codexAuth FROM agent_profiles WHERE id = ?", id)!;
 
 const jwt = (claims: Record<string, unknown>) => `e30.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.sig`;
 
@@ -64,17 +63,14 @@ async function signInCodex(auth: AgentAuth, file: CodexAuthFile) {
 }
 
 describe("agent sign-in profiles", () => {
-  test("keeps tokens in private files and never lists them", async () => {
-    const { dir, auth } = setup();
+  test("keeps tokens encrypted and never lists them", async () => {
+    const { db, auth } = setup();
     fakeFetch(() => Response.json({ data: [] }));
     const profile = await auth.addToken({ agent: "opencode", method: "api-key", name: "Work", token: "oc-secret" });
 
     expect(profile).toMatchObject({ id: "opencode-work", agent: "opencode", inUse: true, error: null });
     expect(JSON.stringify(auth.list())).not.toContain("oc-secret");
-    expect(statSync(join(dir, "auths")).mode & 0o777).toBe(0o700);
-    expect(statSync(join(dir, "auths", "opencode-work")).mode & 0o777).toBe(0o700);
-    expect(statSync(join(dir, "auths", "opencode-work", "profile.json")).mode & 0o777).toBe(0o600);
-    expect(readFileSync(join(dir, "auths", "opencode-work", "profile.json"), "utf8")).not.toContain("oc-secret");
+    expect(stored(db, "opencode-work").profile).not.toContain("oc-secret");
     expect(await auth.vmSecrets()).toEqual({ opencodeApiKey: "oc-secret" });
   });
 
@@ -137,13 +133,13 @@ describe("Claude sign-in", () => {
 
 describe("Codex sign-in", () => {
   test("device sign-in saves a Codex auth.json", async () => {
-    const { dir, auth } = setup();
+    const { db, auth } = setup();
     await signInCodex(auth, codexFile("acct-1", "refresh-1", 10 * day));
     const [profile] = auth.list();
     expect(profile).toMatchObject({ id: "codex-chatgpt-account", agent: "codex", method: "chatgpt", name: "ChatGPT account", detail: "acct-1@example.com", inUse: true });
-    const stored = readFileSync(join(dir, "auths", profile!.id, "auth.json"), "utf8");
-    expect(stored).not.toContain("refresh-1");
-    const saved = JSON.parse(testEncryption.open(stored, `auths/${profile!.id}/auth.json`)) as CodexAuthFile;
+    const { codexAuth } = stored(db, profile!.id);
+    expect(codexAuth).not.toContain("refresh-1");
+    const saved = JSON.parse(testEncryption.open(codexAuth!, `auths/${profile!.id}/auth.json`)) as CodexAuthFile;
     expect(saved).toMatchObject({ auth_mode: "chatgpt", OPENAI_API_KEY: null, tokens: { refresh_token: "refresh-1", account_id: "acct-1" } });
   });
 
@@ -171,16 +167,76 @@ describe("Codex sign-in", () => {
     expect(auth.codexDue()).toBe(false);
   });
 
-  test("takes tokens a VM refreshed itself, only for the same account and only when newer", async () => {
+  /** The refresh token VM Bridge holds, read without refreshing it. */
+  const bridgeRefreshToken = (db: ReturnType<typeof openDatabase>) => {
+    const id = "codex-chatgpt-account";
+    return (JSON.parse(testEncryption.open(stored(db, id).codexAuth!, `auths/${id}/auth.json`)) as CodexAuthFile).tokens.refresh_token;
+  };
+
+  const accountsCheck = "https://chatgpt.com/backend-api/wham/accounts/check";
+  /** ChatGPT's answer to the accounts check: the accounts the access token can use. */
+  const accounts = (...ids: string[]) => () => Response.json({ accounts: ids.map((id) => ({ id })), account_ordering: ids, default_account_id: ids[0] ?? null });
+  const newer = (refresh: string) => JSON.stringify(codexFile("acct-1", refresh, 10 * day, new Date(Date.now() + 60_000)));
+
+  test("takes tokens a VM refreshed itself once ChatGPT accepts its access token for the same account", async () => {
+    const { db, auth } = setup();
+    await signInCodex(auth, codexFile("acct-1", "refresh-1", day));
+    const calls = fakeFetch(accounts("acct-1"));
+    expect(await auth.adoptCodex(JSON.stringify(codexFile("acct-2", "other", 10 * day)), "vm-1")).toBe(false);
+    expect(await auth.adoptCodex(JSON.stringify(codexFile("acct-1", "older", 10 * day, new Date(Date.now() - 5 * day))), "vm-1")).toBe(false);
+    expect(calls).toHaveLength(0);
+    expect(bridgeRefreshToken(db)).toBe("refresh-1");
+
+    const fromVm = codexFile("acct-1", "from-vm", 10 * day, new Date(Date.now() + 60_000));
+    expect(await auth.adoptCodex(JSON.stringify(fromVm), "vm-1")).toBe(true);
+    // One read-only check with the VM's access token. No refresh, so Codex on the VM keeps a working refresh token.
+    expect(calls.map((call) => call.url)).toEqual([accountsCheck]);
+    expect(new Headers(calls[0]?.init?.headers).get("authorization")).toBe(`Bearer ${fromVm.tokens.access_token}`);
+    expect(auth.codexDue()).toBe(false);
+    expect(bridgeRefreshToken(db)).toBe("from-vm");
+  });
+
+  test("ignores a VM's file with a made-up date, expiry or refresh token without asking ChatGPT", async () => {
+    const { db, auth } = setup();
+    const signedIn = codexFile("acct-1", "refresh-1", day);
+    await signInCodex(auth, signedIn);
+    const calls = fakeFetch(accounts("acct-1"));
+    const farFuture = codexFile("acct-1", "attacker", 10 * day, new Date("9999-01-01T00:00:00Z"));
+    const notADate = { ...codexFile("acct-1", "attacker", 10 * day), last_refresh: "not a date" };
+    const longLived = codexFile("acct-1", "attacker", 365 * day, new Date(Date.now() + 60_000));
+    // The access token VM Bridge gave out, still valid, paired with a refresh token that is not.
+    const swapped = { ...signedIn, tokens: { ...signedIn.tokens, refresh_token: "attacker" }, last_refresh: new Date(Date.now() + 60_000).toISOString() };
+    for (const file of [farFuture, notADate, longLived, swapped]) expect(await auth.adoptCodex(JSON.stringify(file), "vm-1")).toBe(false);
+    expect(calls).toHaveLength(0);
+    expect(bridgeRefreshToken(db)).toBe("refresh-1");
+    expect(auth.codexDue()).toBe(true);
+  });
+
+  test("keeps its own tokens when ChatGPT refuses the VM's access token, or it belongs to another account", async () => {
+    const { db, auth } = setup();
+    await signInCodex(auth, codexFile("acct-1", "refresh-1", day));
+    fakeFetch(() => new Response("{}", { status: 401 }));
+    expect(await auth.adoptCodex(newer("forged"), "vm-1")).toBe(false);
+    // The file claims acct-1, but ChatGPT says its access token is for someone else.
+    fakeFetch(accounts("acct-other"));
+    expect(await auth.adoptCodex(newer("foreign"), "vm-2")).toBe(false);
+    fakeFetch(() => Response.json({ accounts: [{ id: "acct-1", is_deactivated: true }] }));
+    expect(await auth.adoptCodex(newer("deactivated"), "vm-3")).toBe(false);
+
+    expect(bridgeRefreshToken(db)).toBe("refresh-1");
+    expect(auth.list()[0]?.error).toBeNull();
+    expect(auth.codexDue()).toBe(true);
+  });
+
+  test("asks ChatGPT about each VM's file at most once in a while", async () => {
     const { auth } = setup();
     await signInCodex(auth, codexFile("acct-1", "refresh-1", day));
-    auth.adoptCodex(JSON.stringify(codexFile("acct-2", "other", 10 * day)));
-    auth.adoptCodex(JSON.stringify(codexFile("acct-1", "older", 10 * day, new Date(Date.now() - 5 * day))));
-    expect(JSON.parse((await auth.vmSecrets()).codexAuthJson!).tokens.refresh_token).toBe("refresh-1");
-
-    auth.adoptCodex(JSON.stringify(codexFile("acct-1", "from-vm", 10 * day, new Date(Date.now() + 60_000))));
-    expect(auth.codexDue()).toBe(false);
-    expect(JSON.parse((await auth.vmSecrets()).codexAuthJson!).tokens.refresh_token).toBe("from-vm");
+    const calls = fakeFetch(() => new Response("{}", { status: 401 }));
+    await auth.adoptCodex(newer("forged-1"), "vm-1");
+    await auth.adoptCodex(newer("forged-2"), "vm-1");
+    expect(calls).toHaveLength(1);
+    await auth.adoptCodex(newer("from-vm-2"), "vm-2");
+    expect(calls).toHaveLength(2);
   });
 
   test("VMs tell a new Codex sign-in apart from a token refresh", async () => {
@@ -200,7 +256,7 @@ describe("Codex sign-in", () => {
 describe("VM sign-ins", () => {
   test("VMs get only VM Bridge sign-ins, with provider ones cleared", async () => {
     const { box, written, commands } = recordingBox();
-    await prepareVm(box, "1.0.0", { claudeOAuthToken: "sk-ant-oat01-x", codexAuthJson: "{}" });
+    await prepareVm(box, "1.0.0", { claudeOAuthToken: "sk-ant-oat01-x", codexAuthJson: "{}" }, "fingerprint");
     const env = written["/workspace/.vmbridge/env"]!;
     expect(env.split("\n")[0]).toContain("GH_TOKEN GITHUB_TOKEN");
     expect(env.split("\n")[0]).toContain("ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL CLAUDE_CODE_OAUTH_TOKEN OPENAI_API_KEY");
@@ -218,7 +274,7 @@ describe("VM sign-ins", () => {
   test("git on the VM uses the GitHub token, the account's name and its noreply email", async () => {
     const { box, written } = recordingBox();
     const github = { token: "github_pat_abc", login: "octo-cat", name: 'Mona "Octo" Lisa', email: "1+octo-cat@users.noreply.github.com" };
-    await prepareVm(box, "1.0.0", { github });
+    await prepareVm(box, "1.0.0", { github }, "fingerprint");
     expect(written["/workspace/.vmbridge/git-credentials"]).toBe("https://octo-cat:github_pat_abc@github.com\n");
     const config = written["/workspace/.vmbridge/gitconfig"]!;
     expect(config).toContain("\thelper = store --file /workspace/.vmbridge/git-credentials");

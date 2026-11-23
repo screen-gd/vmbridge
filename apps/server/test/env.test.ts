@@ -8,7 +8,7 @@ import { envNameProblem, envValueProblem, prepareVm, type VmCredentials } from "
 /** The files prepareVm writes into the VM. */
 async function vmFiles(credentials: VmCredentials) {
   const { box, written } = recordingBox();
-  await prepareVm(box, "1.0.0", credentials);
+  await prepareVm(box, "1.0.0", credentials, "fingerprint");
   return written;
 }
 

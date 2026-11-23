@@ -1,6 +1,8 @@
 // ChatGPT sign-in for Codex, the same device flow `codex login --device-auth` runs.
 // The saved file is a Codex `auth.json`, so VMs use it as is.
 
+import { sleep } from "../runtime.ts";
+
 const issuer = "https://auth.openai.com";
 const clientId = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const verificationUrl = `${issuer}/codex/device`;
@@ -93,7 +95,7 @@ export async function completeDeviceCode(code: DeviceCode, signal: AbortSignal):
     if (Date.now() > deadline) throw new Error("The code expired. Start again.");
     const response = await post(`${issuer}/api/accounts/deviceauth/token`, { device_auth_id: code.deviceAuthId, user_code: code.userCode });
     // 403 and 404 mean the person has not approved the code yet.
-    if (response.status === 403 || response.status === 404) await Bun.sleep(code.intervalMs);
+    if (response.status === 403 || response.status === 404) await sleep(code.intervalMs);
     else if (!response.ok) throw new Error(`OpenAI answered ${response.status} while waiting for the sign-in.`);
     else approved = (await response.json()) as typeof approved;
   }
@@ -110,6 +112,21 @@ export async function completeDeviceCode(code: DeviceCode, signal: AbortSignal):
   );
   if (!response.ok) throw new Error(`OpenAI answered ${response.status} when finishing the sign-in.`);
   return authFile((await response.json()) as { id_token: string; access_token: string; refresh_token: string });
+}
+
+/**
+ * The ChatGPT accounts an access token can use, from the endpoint Codex checks accounts with
+ * (`get_accounts_check` in codex-rs/backend-client). It only reads, so unlike a refresh it never rotates
+ * tokens someone else holds. Throws when ChatGPT does not accept the token.
+ */
+export async function codexTokenAccounts(accessToken: string): Promise<string[]> {
+  const response = await fetch("https://chatgpt.com/backend-api/wham/accounts/check", {
+    headers: { authorization: `Bearer ${accessToken}`, "user-agent": "codex-cli" },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error(`ChatGPT answered ${response.status} when checking the account.`);
+  const body = (await response.json()) as { accounts?: { id?: unknown; is_deactivated?: boolean }[] };
+  return (body.accounts ?? []).flatMap((account) => (typeof account.id === "string" && !account.is_deactivated ? [account.id] : []));
 }
 
 /** Trades the refresh token for new tokens. OpenAI rotates refresh tokens, so the old one stops working. */

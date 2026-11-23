@@ -1,6 +1,6 @@
-import { setTimeout as sleep } from "node:timers/promises";
 import { connectSandbox } from "@opencoredev/sandbox-sdk";
 import { daytona } from "@opencoredev/sandbox-sdk/daytona";
+import { sleep } from "../runtime.ts";
 import { notFound, sdkDriver } from "./sdk.ts";
 import { required, type Box, type ProviderDefinition } from "./types.ts";
 

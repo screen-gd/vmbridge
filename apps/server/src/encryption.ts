@@ -1,12 +1,10 @@
-import type { Database } from "bun:sqlite";
-import { createCipheriv, createDecipheriv, createSecretKey, randomBytes, type KeyObject } from "node:crypto";
-import { existsSync, linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import type { Sql } from "./sql.ts";
+import { createCipheriv, createDecipheriv, createHmac, createSecretKey, hkdfSync, pbkdf2Sync, randomBytes, type KeyObject } from "node:crypto";
 
 const prefix = "v1:";
 const ivBytes = 12;
 const tagBytes = 16;
-const keyBytes = 32;
+export const keyBytes = 32;
 
 /** The key is missing, malformed, or not the one the data was encrypted with. Startup stops rather than lose data. */
 export class EncryptionKeyError extends Error {}
@@ -20,10 +18,21 @@ export class EncryptionKeyError extends Error {}
 export class Encryption {
   // A KeyObject, not the bytes: logging it shows only its size.
   private readonly key: KeyObject;
+  /** Derived from the key with HKDF, so fingerprints never use the encryption key itself. */
+  private readonly fingerprintKey: KeyObject;
 
   constructor(key: Uint8Array) {
     if (key.length !== keyBytes) throw new EncryptionKeyError(`The encryption key must be ${keyBytes} bytes.`);
     this.key = createSecretKey(key);
+    this.fingerprintKey = createSecretKey(Buffer.from(hkdfSync("sha256", key, new Uint8Array(0), "vmbridge fingerprint", keyBytes)));
+  }
+
+  /**
+   * An HMAC of `text`, for telling when secret values changed without storing them. Unlike a plain hash, someone
+   * without the key cannot check a guessed value against it.
+   */
+  fingerprint(text: string): string {
+    return createHmac("sha256", this.fingerprintKey).update(text).digest("hex");
   }
 
   static isSealed(value: string) {
@@ -52,7 +61,7 @@ export class Encryption {
   }
 }
 
-/** Where an install's key comes from. A Cloudflare Worker would read its own secret binding instead of `localKey`. */
+/** Where an install's key comes from: a file or variable on Bun (bun/key.ts), a secret on Cloudflare Workers. */
 export interface KeySource {
   key: Uint8Array;
   /** For people: the variable or file holding the key. Never the key itself. */
@@ -62,58 +71,68 @@ export interface KeySource {
 }
 
 export const keyVariable = "VMBRIDGE_ENCRYPTION_KEY";
-export const keyPath = (dir: string) => join(dir, "encryption.key");
+/** The shortest passphrase taken instead of a generated key. */
+export const minPassphraseLength = 32;
+// Fixed, so the same passphrase gives the same key on every runtime. Each install has its own passphrase, and the
+// salt still keeps tables made for other programs from fitting. 100,000 is the most PBKDF2 Workers allow.
+const passphraseSalt = "vmbridge encryption key v1";
+const passphraseIterations = 100_000;
 
-function decodeKey(text: string, location: string) {
-  const key = Buffer.from(text.trim(), "base64");
-  if (key.length !== keyBytes) throw new EncryptionKeyError(`${location} must hold a base64 ${keyBytes}-byte key.`);
-  return key;
+/**
+ * The key `text` holds when it is base64 (or base64url) for exactly 32 bytes, otherwise null. Whitespace inside is
+ * ignored, as Node's base64 decoding always did, so a key file wrapped across lines still reads as the same key.
+ */
+export function base64Key(text: string): Uint8Array | null {
+  const compact = text.replace(/\s/g, "");
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(compact)) return null;
+  const key = Buffer.from(compact, "base64");
+  return key.length === keyBytes ? key : null;
 }
 
 /**
- * This machine's key: `VMBRIDGE_ENCRYPTION_KEY` (base64) when set, otherwise `<dir>/encryption.key`, made on first
- * start when `create` allows it. The file is written whole under a temporary name and linked into place, so a crash
- * never leaves half a key and two starts at once end up with the same one.
+ * Reads a key as people write it: a base64 32-byte key (`openssl rand -base64 32`), or a passphrase of at least
+ * `minPassphraseLength` characters, stretched to a key with PBKDF2-SHA256. Text that decodes to exactly 32 bytes of
+ * base64 is always taken as a key, so keys that worked before still do.
  */
-export function localKey(dir: string, create: boolean): KeySource {
-  const fromEnv = process.env[keyVariable];
-  if (fromEnv) return { key: decodeKey(fromEnv, keyVariable), location: keyVariable, created: false };
-  const path = keyPath(dir);
-  if (existsSync(path)) return { key: decodeKey(readFileSync(path, "utf8"), path), location: path, created: false };
-  if (!create) throw new EncryptionKeyError(`VM Bridge's saved secrets are encrypted, but the key is missing. Put ${path} back or set ${keyVariable}.`);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const temp = `${path}.${process.pid}.tmp`;
-  writeFileSync(temp, `${randomBytes(keyBytes).toString("base64")}\n`, { mode: 0o600 });
-  let created = true;
-  try {
-    linkSync(temp, path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    created = false;
-  } finally {
-    rmSync(temp, { force: true });
+export function keyFromText(text: string, location: string): Uint8Array {
+  const trimmed = text.trim();
+  const key = base64Key(trimmed);
+  if (key) return key;
+  if (trimmed.length < minPassphraseLength) {
+    throw new EncryptionKeyError(`${location} must hold a base64 ${keyBytes}-byte key or a passphrase of at least ${minPassphraseLength} characters.`);
   }
-  return { key: decodeKey(readFileSync(path, "utf8"), path), location: path, created };
+  return pbkdf2Sync(trimmed, passphraseSalt, passphraseIterations, keyBytes, "sha256");
 }
 
 const checkName = "encryption.check";
+/**
+ * The check's text once values saved before encryption were sealed. It is sealed like the check, so someone who can
+ * write the database without the key cannot set it back to make VM Bridge seal, and then trust, values they planted.
+ */
+const migratedCheck = `${checkName}:migrated`;
 
 /**
  * Loads the key and proves it is the one this database was encrypted with, using a known value sealed on first
  * start. A database that has that value never gets a new key, so a lost key stops startup instead of hiding data.
+ * `migrated` says whether values saved before encryption were sealed already, after which `markMigrated` records it.
  */
-export function openEncryption(db: Database, source: (create: boolean) => KeySource) {
-  const check = db.query<{ value: string }, []>(`SELECT value FROM secrets WHERE name = '${checkName}'`).get()?.value;
+export function openEncryption(db: Sql, source: (create: boolean) => KeySource) {
+  const check = db.one<{ value: string }>(`SELECT value FROM secrets WHERE name = '${checkName}'`)?.value;
   const key = source(check === undefined);
   const encryption = new Encryption(key.key);
+  let migrated: boolean;
   if (check === undefined) {
-    db.query("INSERT INTO secrets (name, value) VALUES (?, ?)").run(checkName, encryption.seal(checkName, checkName));
+    // Data from before encryption gets its key made on that first start. A key that already existed means the
+    // database was new (nothing to seal) or its check was removed, and then nothing unencrypted is trusted.
+    migrated = !key.created;
+    db.run("INSERT INTO secrets (name, value) VALUES (?, ?)", checkName, encryption.seal(migrated ? migratedCheck : checkName, checkName));
   } else {
     try {
-      encryption.open(check, checkName);
+      migrated = encryption.open(check, checkName) === migratedCheck;
     } catch {
       throw new EncryptionKeyError(`The encryption key in ${key.location} is not the one VM Bridge's data was encrypted with.`);
     }
   }
-  return { encryption, key };
+  const markMigrated = () => db.run("UPDATE secrets SET value = ? WHERE name = ?", encryption.seal(migratedCheck, checkName), checkName);
+  return { encryption, key, migrated, markMigrated };
 }

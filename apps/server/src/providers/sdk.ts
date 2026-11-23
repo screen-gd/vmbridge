@@ -1,4 +1,3 @@
-import { setTimeout as sleep } from "node:timers/promises";
 import {
   connectSandbox,
   createSandbox,
@@ -9,6 +8,7 @@ import {
 } from "@opencoredev/sandbox-sdk";
 import type { Provider } from "@opencoredev/sandbox-sdk/provider";
 import type { ProviderId, SelectOption, VmSize } from "@vmbridge/contracts";
+import { sleep } from "../runtime.ts";
 import type { Box, CreateVm, Driver, ProviderState, SleepResult, WakeVm } from "./types.ts";
 
 /** How a provider puts an idle VM to sleep. */

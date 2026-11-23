@@ -1,9 +1,7 @@
-import { Database } from "bun:sqlite";
-import { chmodSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import type { Sql } from "./sql.ts";
 
-// Append only. Each entry runs once, in order, tracked by PRAGMA user_version.
-const migrations = [
+// Append only. Entry N (from 1) runs once, in its own transaction, and is then recorded in the migrations table.
+export const migrations = [
   `
   CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   CREATE TABLE secrets (name TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -222,20 +220,47 @@ const migrations = [
   );
   CREATE INDEX turns_at ON turns (at);
   `,
+  // Agent sign-ins, which used to be files under `<data dir>/auths` (see bun/auth-files.ts). Both values are sealed
+  // with the contexts the files used, `auths/<id>/profile.json` and `auths/<id>/auth.json`, so they move unchanged.
+  `
+  CREATE TABLE agent_profiles (
+    id TEXT PRIMARY KEY,
+    profile TEXT NOT NULL,
+    codex_auth TEXT
+  );
+  `,
+  // Sign-in fingerprints were plain SHA-256 hashes, which a copy of the database could check guessed secrets
+  // against. Now they are keyed (see `credentialsFingerprint`): a VM with an old one counts as behind on sign-ins, so
+  // it restarts T3 with the current ones, as after any sign-in change.
+  `UPDATE vms SET t3_credentials = 'unkeyed' WHERE t3_credentials IS NOT NULL;`,
+  // AGENTS.md and CLAUDE.md pasted in the dashboard, sealed with the context `instructions:<name>`.
+  `
+  CREATE TABLE instructions (
+    name TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  `,
 ];
 
-export function openDatabase(path: string): Database {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const db = new Database(path, { create: true, strict: true });
-  // The database holds provider keys and tokens: owner-only. WAL side files share the 0700 directory.
-  if (path !== ":memory:") chmodSync(path, 0o600);
-  db.run("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-  const { user_version: version } = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!;
-  for (let next = version; next < migrations.length; next++) {
+/**
+ * Brings the schema up to date. `legacyVersion` is the `PRAGMA user_version` older versions tracked migrations with:
+ * on the first start with a migrations table, the ones it counts are recorded as done instead of run again.
+ */
+export function migrate(db: Sql, legacyVersion = 0) {
+  db.exec("CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
+  const done = () => db.one<{ version: number | null }>("SELECT MAX(version) AS version FROM migrations")?.version ?? 0;
+  if (done() === 0 && legacyVersion > 0) {
     db.transaction(() => {
-      db.run(migrations[next]!);
-      db.run(`PRAGMA user_version = ${next + 1}`);
-    })();
+      for (let version = 1; version <= Math.min(legacyVersion, migrations.length); version++) {
+        db.run("INSERT INTO migrations (version, applied_at) VALUES (?, ?)", version, Date.now());
+      }
+    });
   }
-  return db;
+  for (let next = done(); next < migrations.length; next++) {
+    db.transaction(() => {
+      db.exec(migrations[next]!);
+      db.run("INSERT INTO migrations (version, applied_at) VALUES (?, ?)", next + 1, Date.now());
+    });
+  }
 }

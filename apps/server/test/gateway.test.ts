@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, test } from "bun:test";
-import { openDatabase } from "../src/db.ts";
+import { openDatabase } from "../src/bun/sqlite.ts";
 import type { Fleet } from "../src/fleet.ts";
 import { Hub } from "../src/gateway/hub.ts";
 import { translate } from "../src/gateway/paths.ts";
@@ -496,6 +496,98 @@ describe("child threads a VM starts itself", () => {
     });
     expect(hub.out(reply("env-vm2"), "vm2")).toEqual(reply(bridge));
     expect(hub.into(reply(bridge), "vm2")).toEqual(reply("env-vm2"));
+    hub.close();
+  });
+});
+
+describe("thread ownership", () => {
+  const onA = { id: "thread-on-A", projectId: "p1", title: "Deploy", status: "idle" };
+  const onB = { id: "thread-on-B", projectId: "p1", title: "Tests", status: "idle" };
+
+  /** Project p1 on vm1 (A) only; vm2 (B) is another connected VM whose shell lies about vm1's thread. */
+  async function setup() {
+    const store = new Store(openDatabase(":memory:"), testEncryption);
+    for (const id of ["vm1", "vm2"]) store.insertVm({ id, provider: "boxd", name: id, size: "medium", state: "ready", createdAt: 0 });
+    store.insertProject({ id: "p1", url: "https://github.com/acme/app.git", branch: null, title: "app", createdAt: 0 });
+    store.addProjectVm("p1", "vm1");
+    store.setCheckout("p1", "vm1", "/workspace/app");
+    const shells: Record<string, (values: unknown[]) => void> = {};
+    const dispatched = { vm1: [] as Wire[], vm2: [] as Wire[] };
+    const fake = (vmId: keyof typeof dispatched) =>
+      ({
+        call: async () => ({ environment: { orchestrationProtocolVersion: 2, environmentId: `env-${vmId}` } }),
+        request: (tag: string, payload: Wire, handler: (frame: unknown) => void) => {
+          if (tag === "orchestration.subscribeShell") shells[vmId] = (values) => handler({ _tag: "Chunk", values });
+          if (tag === "orchestration.dispatchCommand") {
+            dispatched[vmId].push(payload);
+            queueMicrotask(() => handler({ _tag: "Exit", exit: { _tag: "Success", value: { sequence: 1 } } }));
+          }
+          return () => {};
+        },
+      }) as unknown as Backend;
+    const backends: Record<string, Backend> = { vm1: fake("vm1"), vm2: fake("vm2") };
+    const fleet = Object.assign(new EventEmitter(), {
+      backend: (id: string) => backends[id],
+      ensure: async (id: string) => backends[id],
+      lease: () => () => {},
+      touch: () => {},
+    }) as unknown as Fleet;
+    const traffic = { record: () => {} } as unknown as Traffic;
+    const hub = new Hub(store, new Settings(store.db), fleet, traffic, unmeasured);
+    for (const id of ["vm1", "vm2"]) await fleet.onConnect(id, backends[id]!);
+    const snapshot = (vmId: string, threads: Wire[], projects: Wire[] = []) =>
+      shells[vmId]!([{ kind: "snapshot", snapshot: { projects, threads, archivedThreads: [] } }]);
+    const rpc = new Rpc(hub, {} as never, {} as never, traffic, () => false);
+    return { store, hub, rpc, snapshot, dispatched, fleet };
+  }
+
+  test("a VM listing another VM's thread does not take it, and messages still reach the real owner", async () => {
+    const { store, hub, rpc, snapshot, dispatched } = await setup();
+    snapshot("vm1", [onA]);
+    snapshot("vm2", [{ ...onA, title: "Hijacked" }, onB]);
+    expect(store.threadVm(onA.id)).toBe("vm1");
+    // The VM's own new threads, such as children it started, are still its own.
+    expect(store.threadVm(onB.id)).toBe("vm2");
+    expect(hub.shell().threads?.filter((thread) => thread.id === onA.id)).toEqual([onA]);
+
+    const sent: Wire[] = [];
+    const client: RpcClient = { clientId: "c1", cancels: new Map(), send: (frame) => sent.push(frame as Wire), open: () => true };
+    const command = { type: "message.dispatch", commandId: "m1", threadId: onA.id, message: { text: "the token is hunter2" } };
+    await rpc.handle(client, { _tag: "Request", id: 1, tag: "orchestration.dispatchCommand", payload: command });
+    await Bun.sleep(0);
+    expect(dispatched.vm1.map((payload) => payload.commandId)).toEqual(["m1"]);
+    expect(dispatched.vm2).toEqual([]);
+    hub.close();
+  });
+
+  test("a non-owner VM's transcript of a thread is not cached or served, and it cannot restyle a project it does not hold", async () => {
+    const { hub, snapshot } = await setup();
+    snapshot("vm1", [onA]);
+    snapshot("vm2", [onA], [{ id: "p1", title: "Not yours", workspaceRoot: "/workspace/evil" }]);
+    hub.cacheProjection(onA.id, "vm1", { thread: { id: onA.id }, updatedAt: "2026-01-01T00:00:00.000Z", turnItems: [] });
+    hub.cacheProjection(onA.id, "vm2", { thread: { id: onA.id, title: "forged" }, updatedAt: "2099-01-01T00:00:00.000Z", turnItems: [] });
+    expect(hub.sleepingProjection(onA.id, "vm1")?.updatedAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(hub.sleepingProjection(onA.id, "vm2")).toBeNull();
+    expect(hub.shell().projects?.find((project) => project.id === "p1")?.title).toBe("app");
+    hub.close();
+  });
+
+  test("a thread VM Bridge places on a VM is that VM's, and no other VM can claim it", async () => {
+    const { store, hub, snapshot, fleet } = await setup();
+    store.addProjectVm("p1", "vm2");
+    store.setCheckout("p1", "vm2", "/workspace/app");
+    Object.assign(fleet, {
+      placeThread: async (_projectId: string, options: { placed: (vmId: string) => void }) => {
+        options.placed("vm2");
+        return { vmId: "vm2", notice: null };
+      },
+    });
+    const launched = await hub.prepare("orchestration.launchThread", { commandId: "l1", projectId: "p1", threadId: "t-new" }, true);
+    expect(launched.vmId).toBe("vm2");
+    snapshot("vm1", [{ id: "t-new", projectId: "p1" }]);
+    expect(store.threadVm("t-new")).toBe("vm2");
+    snapshot("vm2", [{ id: "t-new", projectId: "p1" }]);
+    expect(hub.shell().threads?.map((thread) => thread.id)).toEqual(["t-new"]);
     hub.close();
   });
 });

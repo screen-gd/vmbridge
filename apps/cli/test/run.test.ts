@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,8 +9,9 @@ let dir: string;
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 /** Runs `vmbridge run` on a free port with a new data folder, not in a terminal, until it says it is running. */
-async function run(env: Record<string, string> = {}) {
+async function run(env: Record<string, string> = {}, prepare = (_data: string) => {}) {
   dir = mkdtempSync(join(tmpdir(), "vmbridge-cli-"));
+  prepare(join(dir, "data"));
   const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
   const port = probe.port!;
   await probe.stop();
@@ -45,4 +46,15 @@ test("still takes the password from VMBRIDGE_PASSWORD", async () => {
   const { output, hasPassword } = await run({ VMBRIDGE_PASSWORD: "from the environment" });
   expect(hasPassword).toBe(true);
   expect(output).toContain("Open the dashboard");
+}, 30_000);
+
+test("makes a log an older service left readable private", async () => {
+  let log = "";
+  await run({}, (data) => {
+    mkdirSync(data, { mode: 0o755 });
+    log = join(data, "vmbridge.log");
+    writeFileSync(log, "", { mode: 0o644 });
+  });
+  expect(statSync(log).mode & 0o777).toBe(0o600);
+  expect(statSync(join(dir, "data")).mode & 0o777).toBe(0o700);
 }, 30_000);

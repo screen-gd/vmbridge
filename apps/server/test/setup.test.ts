@@ -77,7 +77,7 @@ const vmFile = (path: string) => join(dir, ".vmbridge", path);
 
 describe("VM setup", () => {
   test("finishes without the GitHub CLI when GitHub refuses its download", async () => {
-    await prepareVm(box, "1.0.0", {});
+    await prepareVm(box, "1.0.0", {}, "fingerprint");
     expect(runs.at(-1)!.stderr).toContain("Could not install the GitHub CLI");
     expect(existsSync(vmFile("gh"))).toBe(false);
     expect(existsSync(vmFile("gh.new"))).toBe(false);
@@ -86,7 +86,7 @@ describe("VM setup", () => {
 
   test("installs the pinned GitHub CLI from its release download, without GitHub's API, once", async () => {
     env.GH_DOWNLOADS = "1";
-    await prepareVm(box, "1.0.0", {});
+    await prepareVm(box, "1.0.0", {}, "fingerprint");
     const urls = log("curl.log");
     expect(urls).toHaveLength(1);
     expect(urls[0]).toMatch(/^https:\/\/github\.com\/cli\/cli\/releases\/download\/v[\d.]+\/gh_[\d.]+_linux_(amd64|arm64)\.tar\.gz$/);
@@ -94,20 +94,20 @@ describe("VM setup", () => {
 
     // Setup runs again, and finds the pinned gh already there.
     rmSync(vmFile("setup-stamp"));
-    await prepareVm(box, "1.0.0", {});
+    await prepareVm(box, "1.0.0", {}, "fingerprint");
     expect(log("curl.log")).toHaveLength(1);
   });
 
   test("installs only what is missing in one npm run, then skips setup until the T3 version changes", async () => {
-    await prepareVm(box, "1.0.0", {});
+    await prepareVm(box, "1.0.0", {}, "fingerprint");
     expect(log("npm.log")).toEqual([expect.stringMatching(/ t3@1\.0\.0 @anthropic-ai\/claude-code$/)]);
     expect(readFileSync(vmFile("setup-stamp"), "utf8")).toBe(setupStamp("1.0.0"));
 
-    await prepareVm(box, "1.0.0", {});
+    await prepareVm(box, "1.0.0", {}, "fingerprint");
     expect(log("npm.log")).toHaveLength(1);
     expect(log("curl.log")).toHaveLength(1);
 
-    await prepareVm(box, "1.0.1", {});
+    await prepareVm(box, "1.0.1", {}, "fingerprint");
     expect(log("npm.log")).toHaveLength(2);
     expect(log("npm.log")[1]).toContain(" t3@1.0.1 ");
     expect(readFileSync(vmFile("setup-stamp"), "utf8")).toBe(setupStamp("1.0.1"));
@@ -118,7 +118,7 @@ describe("VM setup", () => {
       github: { token: "github_pat_secret", login: "octo", name: "Octo Cat", email: "octo@example.test" },
       claudeOAuthToken: "claude-secret",
     };
-    await prepareVm(box, "1.0.0", credentials);
+    await prepareVm(box, "1.0.0", credentials, "fingerprint");
     // As T3 and skills would leave them.
     t3Up = true;
     mkdirSync(vmFile("t3"));
@@ -126,7 +126,7 @@ describe("VM setup", () => {
     writeFileSync(vmFile("skills.json"), '{"fingerprint":"f1","skills":{}}');
     runs = [];
 
-    const prepared = await prepareVm(box, "1.0.0", credentials);
+    const prepared = await prepareVm(box, "1.0.0", credentials, "fingerprint");
     expect(runs).toHaveLength(1);
     // The sign-ins travel on stdin, never in the command line.
     expect(runs[0]!.command).toBe("bash -s");
@@ -139,19 +139,39 @@ describe("VM setup", () => {
     });
   });
 
+  test("switches OpenCode on in T3 with an OpenCode sign-in, keeping what the user set", async () => {
+    const settings = () => JSON.parse(readFileSync(vmFile("t3/userdata/settings.json"), "utf8"));
+    await prepareVm(box, "1.0.0", {}, "fingerprint");
+    expect(existsSync(vmFile("t3/userdata/settings.json"))).toBe(false);
+
+    await prepareVm(box, "1.0.0", { opencodeApiKey: "opencode-secret" }, "fingerprint");
+    expect(settings()).toEqual({ providerInstances: { opencode: { driver: "opencode", enabled: true } } });
+
+    // A VM whose user changed other settings, then switched OpenCode off in T3.
+    const changed = { defaultThreadEnvMode: "worktree", providerInstances: { opencode: { driver: "opencode", enabled: false } } };
+    writeFileSync(vmFile("t3/userdata/settings.json"), JSON.stringify(changed));
+    await prepareVm(box, "1.0.0", { opencodeApiKey: "opencode-secret" }, "fingerprint");
+    expect(settings()).toEqual(changed);
+
+    // Other settings stay when OpenCode is switched on.
+    writeFileSync(vmFile("t3/userdata/settings.json"), JSON.stringify({ defaultThreadEnvMode: "worktree" }));
+    await prepareVm(box, "1.0.0", { opencodeApiKey: "opencode-secret" }, "fingerprint");
+    expect(settings()).toEqual({ defaultThreadEnvMode: "worktree", providerInstances: { opencode: { driver: "opencode", enabled: true } } });
+  });
+
   test("keeps a Codex sign-in the VM refreshed later than VM Bridge's, and hands it back", async () => {
     const auth = (refreshed: string) => JSON.stringify({ last_refresh: refreshed, tokens: { refresh_token: refreshed } });
-    await prepareVm(box, "1.0.0", { codexAuthJson: auth("2026-01-01T00:00:00Z") });
+    await prepareVm(box, "1.0.0", { codexAuthJson: auth("2026-01-01T00:00:00Z") }, "fingerprint");
     expect(readFileSync(vmFile("codex/auth.json"), "utf8")).toBe(auth("2026-01-01T00:00:00Z"));
 
     // Codex on the VM refreshed on its own.
     writeFileSync(vmFile("codex/auth.json"), auth("2026-01-02T00:00:00Z"));
-    const kept = await prepareVm(box, "1.0.0", { codexAuthJson: auth("2026-01-01T00:00:00Z") });
+    const kept = await prepareVm(box, "1.0.0", { codexAuthJson: auth("2026-01-01T00:00:00Z") }, "fingerprint");
     expect(kept.codexAuth).toBe(auth("2026-01-02T00:00:00Z"));
     expect(readFileSync(vmFile("codex/auth.json"), "utf8")).toBe(auth("2026-01-02T00:00:00Z"));
 
     // VM Bridge refreshed since: the VM gets its file.
-    const replaced = await prepareVm(box, "1.0.0", { codexAuthJson: auth("2026-01-03T00:00:00Z") });
+    const replaced = await prepareVm(box, "1.0.0", { codexAuthJson: auth("2026-01-03T00:00:00Z") }, "fingerprint");
     expect(replaced.codexAuth).toBeNull();
     expect(readFileSync(vmFile("codex/auth.json"), "utf8")).toBe(auth("2026-01-03T00:00:00Z"));
     expect(existsSync(vmFile("codex/auth.json.incoming"))).toBe(false);

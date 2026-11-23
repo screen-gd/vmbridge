@@ -103,6 +103,9 @@ const setupCommand = (metadata: string) =>
   `sudo -n install -d -o "$(id -u)" -g "$(id -g)" /workspace /var/lib/sandbox-sdk; fi && ` +
   `test -w /workspace && test -w /var/lib/sandbox-sdk && mkdir -p /tmp/.sandbox-sdk && printf %s ${quote(metadata)} > ${metadataPath}`;
 
+/** Where each command's stdin waits until the command starts. */
+const stdinDir = "/tmp/.sandbox-sdk/stdin";
+
 const statScript = `import os,sys,json,stat
 def info(p):
  s=os.lstat(p)
@@ -209,25 +212,24 @@ export function boxdWeb(client: BoxdWebClient, options: BoxdWebOptions): BoxdWeb
   async function exec(id: string, input: ExecInput): Promise<ExecResult> {
     if (input.signal?.aborted) return { exitCode: null, timedOut: true };
     const tag = `vmbridge-exec-${crypto.randomUUID()}`;
-    let stdinPath: string | undefined;
-    if (input.stdin) {
-      stdinPath = `/tmp/.sandbox-sdk/stdin-${crypto.randomUUID()}`;
-      await writeFile(id, stdinPath, new TextEncoder().encode(input.stdin));
-    }
-    const started = Date.now();
-    const running = client.machines.exec(id, {
-      command: execLine(input, stdinPath, tag),
-      // boxd's own deadline only backs up `timeout` in the guest, which ends the command first.
-      timeout: input.timeoutMs + 15_000,
-    });
-    running.catch(() => {});
-
+    // The command removes its stdin file as it starts. Until then it can hold sign-ins, so it waits in a folder only
+    // the VM's user can open, and is removed below if the command never ran.
+    const stdinPath = input.stdin ? `${stdinDir}/${crypto.randomUUID()}` : undefined;
+    let ran = false;
     let onAbort = () => {};
-    const aborted = new Promise<"aborted">((resolve) => {
-      onAbort = () => resolve("aborted");
-      input.signal?.addEventListener("abort", onAbort, { once: true });
-    });
     try {
+      if (stdinPath) await writeFile(id, stdinPath, new TextEncoder().encode(input.stdin), `umask 077 && mkdir -p -m 700 -- ${stdinDir}`);
+      const started = Date.now();
+      const running = client.machines.exec(id, {
+        command: execLine(input, stdinPath, tag),
+        // boxd's own deadline only backs up `timeout` in the guest, which ends the command first.
+        timeout: input.timeoutMs + 15_000,
+      });
+      running.catch(() => {});
+      const aborted = new Promise<"aborted">((resolve) => {
+        onAbort = () => resolve("aborted");
+        input.signal?.addEventListener("abort", onAbort, { once: true });
+      });
       const outcome = await Promise.race([running, aborted]);
       if (outcome === "aborted") {
         // `[v]` keeps the pattern from matching this kill command itself. `timeout` leads the group, so the negative
@@ -236,6 +238,7 @@ export function boxdWeb(client: BoxdWebClient, options: BoxdWebOptions): BoxdWeb
         await raw(id, `for p in $(pgrep -f ${pattern}); do kill -9 -"$p" 2>/dev/null; kill -9 "$p" 2>/dev/null; done; true`);
         return { exitCode: null, timedOut: true };
       }
+      ran = true;
       if (outcome.stdout) input.onChunk({ stream: "stdout", text: outcome.stdout });
       if (outcome.stderr) input.onChunk({ stream: "stderr", text: outcome.stderr });
       // 124 is `timeout`'s own exit code, 137 its kill after the grace period.
@@ -243,15 +246,16 @@ export function boxdWeb(client: BoxdWebClient, options: BoxdWebOptions): BoxdWeb
       return { exitCode: timedOut ? null : outcome.exitCode, timedOut };
     } finally {
       input.signal?.removeEventListener("abort", onAbort);
+      if (stdinPath && !ran) await raw(id, `rm -f -- ${quote(stdinPath)}`).catch(() => {});
     }
   }
 
-  async function writeFile(id: string, path: string, data: Uint8Array) {
+  /** `makeParent` is the guest command that creates the file's folder when the upload finds it missing. */
+  async function writeFile(id: string, path: string, data: Uint8Array, makeParent = `mkdir -p -- "$(dirname -- ${quote(path)})"`) {
     const written = await client.machines.files.upload(id, path, data).catch(async (error: unknown) => {
       const mapped = boxdWebError(error, apiKey, id);
       if (mapped.code !== "file_not_found" && mapped.code !== "not_found") throw mapped;
-      // The parent directory is missing.
-      await raw(id, `mkdir -p -- "$(dirname -- ${quote(path)})"`);
+      await raw(id, makeParent);
       return client.machines.files.upload(id, path, data);
     });
     if (written !== data.length) throw fail("Incomplete file upload", "provider", id);
