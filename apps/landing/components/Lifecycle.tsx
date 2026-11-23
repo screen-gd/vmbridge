@@ -184,7 +184,7 @@ export function Lifecycle() {
               const el = e.currentTarget;
               pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
             }}
-            className="min-h-0 flex-1 basis-0 overflow-y-auto p-5 [mask-image:linear-gradient(to_bottom,transparent,black_2.5rem)] sm:p-6"
+            className="min-h-0 flex-1 basis-0 overflow-y-auto overscroll-y-auto! p-5 [mask-image:linear-gradient(to_bottom,transparent,black_2.5rem)] sm:p-6"
           >
             <div className="flex min-h-full flex-col justify-end gap-5">
             {items.map((item) =>
