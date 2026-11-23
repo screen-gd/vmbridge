@@ -58,6 +58,13 @@ export function Lifecycle() {
   const [streaming, setStreaming] = useState(false);
   const [items, setItems] = useState<Item[]>(initialItems);
   const nextId = useRef(initialItems.length);
+  const scroller = useRef<HTMLDivElement>(null);
+  // Follows the newest message unless the visitor has scrolled back.
+  const pinned = useRef(true);
+  useEffect(() => {
+    const el = scroller.current;
+    if (el && pinned.current) el.scrollTop = el.scrollHeight;
+  }, [items]);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reduced = useReducedMotion();
@@ -168,7 +175,18 @@ export function Lifecycle() {
       >
         {phase === "idle" ? <div className="h-px origin-left bg-primary" style={{ animation: "drain 8000ms linear forwards" }} /> : null}
         <div className="flex h-[30rem] flex-col sm:h-[27rem]">
-          <div className="flex min-h-0 flex-1 basis-0 flex-col justify-end gap-5 overflow-hidden p-5 [mask-image:linear-gradient(to_bottom,transparent,black_2.5rem)] sm:p-6">
+          {/* Scrolls when the transcript outgrows the pane (narrow phones). The inner column
+              pushes short transcripts to the bottom without putting overflow above the scroll origin. */}
+          <div
+            ref={scroller}
+            data-lenis-prevent
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+            }}
+            className="min-h-0 flex-1 basis-0 overflow-y-auto p-5 [mask-image:linear-gradient(to_bottom,transparent,black_2.5rem)] sm:p-6"
+          >
+            <div className="flex min-h-full flex-col justify-end gap-5">
             {items.map((item) =>
               item.kind === "user" ? (
                 <div key={item.id} className="ml-auto max-w-[80%] rounded-md bg-muted px-3.5 py-2 text-base" style={item.animate ? rise : undefined}>
@@ -185,6 +203,7 @@ export function Lifecycle() {
                 </div>
               ),
             )}
+            </div>
           </div>
           <div className="mx-5 mt-0 mb-5 flex items-end gap-2 rounded-md bg-muted py-2 pr-1.5 pl-3.5 sm:mx-6 sm:mb-6">
             <span aria-hidden className="line-clamp-2 flex-1 text-base leading-6 text-muted-foreground">

@@ -150,7 +150,7 @@ export function LiveTerminal({
 
   /** Walk the command history; past the newest entry the prompt clears. */
   const recall = (delta: number) => {
-    if (!history.length) return;
+    if (!history.length || (hIndex < 0 && delta > 0)) return;
     const next = hIndex < 0 ? history.length - 1 : hIndex + delta;
     if (next >= history.length) {
       setValue("");
