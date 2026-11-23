@@ -161,6 +161,17 @@ export const copy = {
   },
 
   /** The questions, opening in place. Answers live in data.faq so structured data and llms.txt share them. */
+  docs: {
+    eyebrow: "Docs",
+    /** 30 */
+    title: "How VM Bridge works",
+    /** 160 */
+    body: "Install it, add a provider and pair T3 Code. Then how requests reach a VM, when VMs sleep and wake, and where your keys and data live.",
+    faq: "Read the FAQ",
+    issue: "Open an issue",
+    stuck: "Still stuck?",
+    stuckBody: "The FAQ answers the common questions. Anything else, open an issue on GitHub.",
+  },
   faq: {
     /** 40 */
     title: "Questions",

@@ -1,12 +1,16 @@
+import { ArrowDown01Icon, ArrowRight01Icon, GithubIcon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Footer, Nav } from "@/components/Chrome";
 import { ProviderLogo } from "@/components/brand";
 import { Command, CopyButton } from "@/components/CopyButton";
-import { DocsNav, type DocsSection } from "@/components/DocsNav";
+import { type DocsGroup, DocsNav } from "@/components/DocsNav";
 import { Topology } from "@/components/Topology";
-import { commands, install, providers } from "@/lib/data";
-import { openGraph } from "@/lib/site";
-import { rails } from "@/lib/styles";
+import { copy } from "@/lib/copy";
+import { commands, github, install, providers } from "@/lib/data";
+import { openGraph, site } from "@/lib/site";
+import { innerPad, primaryButton, railShell, secondaryButton } from "@/lib/styles";
 
 const title = "VM Bridge docs: install, providers, sleep and wake";
 const description =
@@ -19,48 +23,90 @@ export const metadata: Metadata = {
   openGraph: { ...openGraph, url: "/docs", title, description },
 };
 
-const sections: DocsSection[] = [
-  { id: "overview", title: "Overview" },
-  { id: "install", title: "Install" },
-  { id: "run", title: "Run" },
-  { id: "setup", title: "Set up the dashboard" },
-  { id: "pair", title: "Pair T3 Code" },
-  { id: "flow", title: "How a request flows" },
-  { id: "sleep", title: "Sleep and wake" },
-  { id: "providers", title: "Providers" },
-  { id: "sign-in", title: "Agent sign-ins and GitHub" },
-  { id: "env", title: "Environment variables" },
-  { id: "skills", title: "Skills" },
-  { id: "instructions", title: "AGENTS.md" },
-  { id: "network", title: "Addresses and Tailscale" },
-  { id: "cloudflare", title: "Cloudflare Tunnel" },
-  { id: "security", title: "Data and security" },
-  { id: "encryption", title: "Encryption" },
-  { id: "troubleshooting", title: "Troubleshooting" },
-  { id: "develop", title: "Develop" },
+const groups: DocsGroup[] = [
+  {
+    label: "Start",
+    sections: [
+      { id: "overview", title: "Overview" },
+      { id: "install", title: "Install" },
+      { id: "run", title: "Run" },
+      { id: "setup", title: "Set up the dashboard" },
+      { id: "pair", title: "Pair T3 Code" },
+    ],
+  },
+  {
+    label: "How it works",
+    sections: [
+      { id: "flow", title: "How a request flows" },
+      { id: "sleep", title: "Sleep and wake" },
+      { id: "providers", title: "Providers" },
+    ],
+  },
+  {
+    label: "Agents",
+    sections: [
+      { id: "sign-in", title: "Agent sign-ins and GitHub" },
+      { id: "env", title: "Environment variables" },
+      { id: "skills", title: "Skills" },
+      { id: "instructions", title: "AGENTS.md" },
+    ],
+  },
+  {
+    label: "Network",
+    sections: [
+      { id: "network", title: "Addresses and Tailscale" },
+      { id: "cloudflare", title: "Cloudflare Tunnel" },
+    ],
+  },
+  {
+    label: "Security",
+    sections: [
+      { id: "security", title: "Data and security" },
+      { id: "encryption", title: "Encryption" },
+    ],
+  },
+  {
+    label: "Help",
+    sections: [
+      { id: "troubleshooting", title: "Troubleshooting" },
+      { id: "develop", title: "Develop" },
+    ],
+  },
 ];
 
+const numbers = new Map(groups.flatMap((g) => g.sections).map((s, i) => [s.id, String(i + 1).padStart(2, "0")]));
+
+/**
+ * One docs section on the plane, separated from the next by a hairline that spans
+ * the content column. From xl the number and heading stick on the left while the
+ * text runs on the right, the same split as the landing sections.
+ */
 function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
-    <section id={id} className="scroll-mt-20 border-b py-10 first:pt-0 last:border-b-0">
-      <h2 className="text-2xl font-semibold tracking-tight">
-        <a href={`#${id}`} className="hover:underline hover:decoration-faint hover:underline-offset-4">
-          {title}
-        </a>
-      </h2>
-      <div className="mt-4 space-y-4 leading-7 text-pretty text-muted-foreground [&_strong]:font-medium [&_strong]:text-foreground">{children}</div>
+    <section id={id} className={`scroll-mt-14 ${innerPad} py-12 lg:py-14 xl:grid xl:grid-cols-[minmax(0,15rem)_minmax(0,46rem)] xl:items-start xl:gap-x-12`}>
+      <div className="xl:sticky xl:top-24">
+        <div className="font-mono text-[13px] text-primary">{numbers.get(id)}</div>
+        <h2 className="title mt-3 xl:text-[1.75rem]">
+          <a href={`#${id}`} className="transition-colors duration-150 hover:text-foreground/80">
+            {title}
+          </a>
+        </h2>
+      </div>
+      <div className="mt-6 min-w-0 space-y-4 leading-7 text-pretty text-muted-foreground xl:mt-1 [&_strong]:font-medium [&_strong]:text-foreground">
+        {children}
+      </div>
     </section>
   );
 }
 
 function Code({ children }: { children: string }) {
-  return <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em] text-foreground">{children}</code>;
+  return <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[0.85em] text-foreground">{children}</code>;
 }
 
 function Block({ children }: { children: string }) {
   return (
     <div className="relative rounded-md bg-card">
-      <pre data-lenis-prevent className="overflow-x-auto p-4 pr-12 font-mono text-[13px] leading-6 text-foreground">{children}</pre>
+      <pre className="overflow-x-auto p-4 pr-12 font-mono text-[13px] leading-6 text-foreground">{children}</pre>
       <CopyButton text={children} className="absolute top-2 right-2" />
     </div>
   );
@@ -71,7 +117,7 @@ function List({ items }: { items: React.ReactNode[] }) {
     <ul className="space-y-2">
       {items.map((item, i) => (
         <li key={i} className="flex gap-3">
-          <span className="mt-[11px] size-1 shrink-0 rounded-full bg-faint" />
+          <span aria-hidden className="mt-[13px] h-px w-2.5 shrink-0 bg-white/30" />
           <span>{item}</span>
         </li>
       ))}
@@ -81,18 +127,18 @@ function List({ items }: { items: React.ReactNode[] }) {
 
 function Table({ head, rows }: { head: React.ReactNode[]; rows: React.ReactNode[][] }) {
   return (
-    <div className="overflow-x-auto rounded-md border">
+    <div className="overflow-x-auto rounded-md border border-white/10">
       <table className="w-full min-w-[560px] text-left text-sm">
-        <thead className="bg-card text-foreground">
+        <thead className="bg-card">
           <tr>
             {head.map((cell, i) => (
-              <th key={i} className="px-4 py-2.5 font-medium">
+              <th key={i} className="px-4 py-2.5 font-mono text-[12px] font-normal text-faint">
                 {cell}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y">
+        <tbody className="divide-y divide-white/10">
           {rows.map((row, i) => (
             <tr key={i}>
               {row.map((cell, j) => (
@@ -112,22 +158,48 @@ export default function Docs() {
   return (
     <>
       <Nav />
-      <div className={`${rails} flex gap-12`}>
-        <aside data-lenis-prevent className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-52 shrink-0 overflow-y-auto py-10 lg:block">
-          <DocsNav sections={sections} />
-        </aside>
-
-        <main className="min-w-0 flex-1 py-10 lg:max-w-3xl">
-          <h1 className="title">How VM Bridge works</h1>
-
-          <details className="mt-6 rounded-md border bg-card lg:hidden">
-            <summary className="cursor-pointer px-4 py-3 text-sm font-medium">On this page</summary>
-            <div className="border-t px-2 py-2">
-              <DocsNav sections={sections} />
+      <div className={railShell}>
+        <header className={`${innerPad} py-14 lg:py-20 xl:grid xl:grid-cols-12 xl:items-end xl:gap-x-16`}>
+          <div className="xl:col-span-6 motion-safe:animate-[rise_600ms_cubic-bezier(0.22,1,0.36,1)_backwards]">
+            <div className="font-mono text-[13px] text-faint">
+              {copy.docs.eyebrow} <span className="text-white/20">/</span> v{site.version}
             </div>
-          </details>
+            <h1 className="display mt-4">{copy.docs.title}</h1>
+            <p className="mt-4 max-w-[36rem] text-pretty text-[17px] text-muted-foreground">{copy.docs.body}</p>
+          </div>
+          <div className="mt-8 min-w-0 xl:col-span-6 xl:mt-0 motion-safe:animate-[rise_600ms_cubic-bezier(0.22,1,0.36,1)_80ms_backwards]">
+            <Command text={install} />
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link href="/faq" className={`${primaryButton} group`}>
+                {copy.docs.faq}
+                <HugeiconsIcon icon={ArrowRight01Icon} size={15} className="transition-transform duration-150 group-hover:translate-x-0.5" />
+              </Link>
+              <a href={github} className={secondaryButton}>
+                <HugeiconsIcon icon={GithubIcon} size={15} />
+                {copy.nav.github}
+              </a>
+            </div>
+          </div>
+        </header>
 
-          <div className="mt-10">
+        <div className="border-t border-white/10 lg:grid lg:grid-cols-[15rem_minmax(0,1fr)]">
+          <aside className="hidden border-r border-white/10 lg:block">
+            <div className="sticky top-14 max-h-[calc(100vh-3.5rem)] overflow-y-auto px-6 py-10">
+              <DocsNav groups={groups} />
+            </div>
+          </aside>
+
+          <main className="min-w-0 divide-y divide-white/10">
+            <details className={`group/toc ${innerPad} py-4 lg:hidden`}>
+              <summary className="flex cursor-pointer list-none items-center justify-between font-mono text-[13px] text-muted-foreground [&::-webkit-details-marker]:hidden">
+                On this page
+                <HugeiconsIcon icon={ArrowDown01Icon} size={15} className="transition-transform duration-150 group-open/toc:rotate-180" />
+              </summary>
+              <div className="pt-6 pb-2">
+                <DocsNav groups={groups} />
+              </div>
+            </details>
+
             <Section id="overview" title="Overview">
               <p>
                 VM Bridge runs <strong>T3 Code</strong> agents on cloud VMs. You pair an unchanged T3 Code app with VM Bridge once. After that, VM
@@ -587,8 +659,25 @@ bun run check      # typecheck and tests`}</Block>
                 ]}
               />
             </Section>
-          </div>
-        </main>
+
+            <section className={`${innerPad} py-12 lg:py-14 xl:grid xl:grid-cols-[minmax(0,15rem)_minmax(0,46rem)] xl:gap-x-12`}>
+              <h2 className="title xl:text-[1.75rem]">{copy.docs.stuck}</h2>
+              <div className="mt-4 xl:mt-1">
+                <p className="text-pretty text-muted-foreground">{copy.docs.stuckBody}</p>
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <Link href="/faq" className={`${primaryButton} group`}>
+                    {copy.docs.faq}
+                    <HugeiconsIcon icon={ArrowRight01Icon} size={15} className="transition-transform duration-150 group-hover:translate-x-0.5" />
+                  </Link>
+                  <a href={`${github}/issues/new`} className={secondaryButton}>
+                    <HugeiconsIcon icon={GithubIcon} size={15} />
+                    {copy.docs.issue}
+                  </a>
+                </div>
+              </div>
+            </section>
+          </main>
+        </div>
       </div>
       <Footer />
     </>

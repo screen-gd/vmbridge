@@ -1,6 +1,7 @@
 "use client";
 
 import Lenis from "lenis";
+import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 
 /**
@@ -9,11 +10,15 @@ import { useEffect } from "react";
  * (including `/#id` links while already on `/`) glide to the section — Lenis reads
  * each target's own `scroll-margin`, which the sections already set to the 56px nav
  * offset. Nested scrollers opt out with `data-lenis-prevent`. Never mounts under
- * prefers-reduced-motion, so scrolling stays native there.
+ * prefers-reduced-motion, so scrolling stays native there. The docs keep native
+ * scrolling too: a long reading page with a sticky, scrollable sidebar and wide
+ * code blocks fights the smoothed wheel.
  */
 export function SmoothScroll() {
+  const pathname = usePathname();
+  const native = pathname.startsWith("/docs");
   useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (native || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const lenis = new Lenis({ lerp: 0.1, anchors: true });
     let raf = 0;
     const loop = (time: number) => {
@@ -25,6 +30,6 @@ export function SmoothScroll() {
       cancelAnimationFrame(raf);
       lenis.destroy();
     };
-  }, []);
+  }, [native]);
   return null;
 }
